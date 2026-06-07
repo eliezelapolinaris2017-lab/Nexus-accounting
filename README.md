@@ -27,3 +27,10 @@ Portal web de contabilidad profesional enfocado en el ciclo contable.
 ## Nota técnica
 
 La configuración Firebase queda encapsulada. Si necesitas cambiar credenciales, la función técnica sigue existiendo en código, pero ya no aparece en el menú principal del usuario.
+
+## v1.1.1 Auth Multiempresa
+- Cada usuario Firebase usa almacenamiento local separado por UID: `nexusAccountingPR:{uid}`.
+- Las cuentas nuevas comienzan limpias: sin usuarios demo, clientes demo ni saldos de otro email.
+- Cada cuenta crea su empresa inicial bajo `companies/company-{uid}`.
+- La app mantiene la estructura multiempresa preparada: `users/{uid}.activeCompanyId` y `companies/{companyId}/users/{uid}`.
+- El login ya no reutiliza la data global anterior del navegador.

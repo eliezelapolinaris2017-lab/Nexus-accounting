@@ -5,7 +5,7 @@ const navItems = [
 ];
 
 const seed = {
-  company:{ name:'Nexus Demo LLC', fiscalYear:2026, ivu:11.5 },
+  company:{ name:'', tradeName:'', legalName:'', fiscalYear:new Date().getFullYear(), ivu:11.5 },
   accounts:[
     {code:'1000',name:'Activos',type:'asset',parent:null},{code:'1100',name:'Caja',type:'asset',parent:'1000'},
     {code:'1200',name:'Banco',type:'asset',parent:'1000'},{code:'1300',name:'Cuentas por Cobrar',type:'asset',parent:'1000'},
@@ -20,23 +20,42 @@ const seed = {
     {code:'5400',name:'Publicidad',type:'expense',parent:'5000'},
     {code:'5500',name:'Cargos Bancarios',type:'expense',parent:'5000'},
   ],
-  customers:[{id:crypto.randomUUID(),name:'Cliente Demo',email:'cliente@demo.com',phone:'787-000-0000',balance:0}],
-  vendors:[{id:crypto.randomUUID(),name:'Suplidor Demo',email:'suplidor@demo.com',phone:'787-111-1111',balance:0}],
+  customers:[],
+  vendors:[],
   invoices:[], bills:[], payments:[], bankAccounts:[{id:'bank-main',name:'Banco Principal',account:'1200',balance:0}],
   reconciliations:[], statementImports:[], entries:[], audit:[]
 };
 
-let db = load();
 let active = 'dashboard';
+let currentUserUid = null;
+let currentStorageKey = 'nexusAccountingPR:guest';
+let db = load();
 
-function load(){
-  const raw = localStorage.getItem('nexusAccountingPR');
-  if(raw){ const parsed = JSON.parse(raw); return migrate(parsed); }
+function storageKeyFor(uid){ return uid ? `nexusAccountingPR:${uid}` : 'nexusAccountingPR:guest'; }
+function freshDatabase(){
   const initial = structuredClone(seed);
-  initial.entries.push(entry('2026-06-01','Aporte inicial','CAP-001',[line('1200',5000,0),line('3100',0,5000)]));
-  localStorage.setItem('nexusAccountingPR', JSON.stringify(initial));
+  initial.company.id = '';
+  initial.company.operatingStatus = 'Nueva';
+  initial.users = [];
+  initial.entries = [];
+  initial.audit = [];
+  initial.customers = [];
+  initial.vendors = [];
+  return migrate(initial);
+}
+function load(uid=currentUserUid){
+  currentStorageKey = storageKeyFor(uid);
+  const raw = localStorage.getItem(currentStorageKey);
+  if(raw){
+    try{ return migrate(JSON.parse(raw)); }
+    catch(e){ console.warn('Data local corrupta para', currentStorageKey, e); }
+  }
+  const initial = freshDatabase();
+  localStorage.setItem(currentStorageKey, JSON.stringify(initial));
   return initial;
 }
+function save(){ localStorage.setItem(currentStorageKey, JSON.stringify(db)); }
+function switchTenant(uid){ currentUserUid=uid||null; db=load(currentUserUid); return db; }
 function migrate(data){
   data.reconciliations ||= [];
   data.statementImports ||= [];
@@ -46,7 +65,6 @@ function migrate(data){
   ensure({code:'5500',name:'Cargos Bancarios',type:'expense',parent:'5000'});
   return data;
 }
-function save(){ localStorage.setItem('nexusAccountingPR', JSON.stringify(db)); }
 function money(n){ return Number(n||0).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
 function today(){ return new Date().toISOString().slice(0,10); }
 function account(code){ return db.accounts.find(a=>a.code===code) || {name:'Cuenta no encontrada',type:'asset'}; }
@@ -177,7 +195,7 @@ function finalizeReconciliation(){ try{ const r=reconciliationSummary(); if(Math
 function taxes(){ const ivuPayable=balanceByAccount('2300'); return `<div class="grid three"><div class="card kpi"><div class="label">IVU Configurado</div><div class="value">${db.company.ivu}%</div><div class="sub">Puerto Rico</div></div>${kpi('IVU por Pagar',ivuPayable,'Generado por facturas','warning')}<div class="card"><h3>Resumen</h3><p>El IVU se calcula automáticamente desde facturación y se acredita a IVU por Pagar.</p></div></div>`; }
 function financials(){ const t=totals(); return `<div class="grid two"><div class="card"><h3>Estado de Resultados</h3><table class="table"><tr><td>Ingresos</td><td>${money(t.income)}</td></tr><tr><td>Gastos</td><td>${money(t.expense)}</td></tr><tr><th>Utilidad neta</th><th>${money(t.net)}</th></tr></table></div><div class="card"><h3>Balance General</h3><table class="table"><tr><td>Activos</td><td>${money(t.assets)}</td></tr><tr><td>Pasivos</td><td>${money(t.liabilities)}</td></tr><tr><td>Capital</td><td>${money(t.equity)}</td></tr></table></div></div>`; }
 function settings(){ return `<div class="card"><h3>Configuración</h3><div class="form-grid"><label>Empresa<input id="cfgName" value="${db.company.name}"></label><label>IVU %<input id="cfgIvu" type="number" step="0.01" value="${db.company.ivu}"></label></div><div class="actions"><button onclick="saveSettings()">Guardar configuración</button></div></div>`; }
-function saveSettings(){ db.company.name=document.getElementById('cfgName').value; db.company.ivu=Number(document.getElementById('cfgIvu').value); save(); document.getElementById('companyLabel').textContent=`${db.company.name} · Año Fiscal ${db.company.fiscalYear}`; render('settings'); }
+function saveSettings(){ db.company.name=document.getElementById('cfgName').value; db.company.ivu=Number(document.getElementById('cfgIvu').value); save(); document.getElementById('companyLabel').textContent=`${db.company.name||db.company.tradeName||'Crear empresa'} · Año Fiscal ${db.company.fiscalYear||new Date().getFullYear()}`; render('settings'); }
 
 function openModal(type){
   document.getElementById('modal').classList.remove('hidden');
@@ -201,9 +219,9 @@ function statementLineForm(){ return `<div class="form-grid"><label>Fecha<input 
 function saveStatementLine(){ const b=db.bankAccounts[0]; const amt=Number(sAmount.value||0); if(!amt) return alert('El monto no puede ser cero.'); db.statementImports.push({id:crypto.randomUUID(),bankAccountId:b.id,date:sDate.value,description:sDesc.value,reference:sRef.value,amount:amt,reconciled:false,bookKey:null,manual:true,createdAt:new Date().toISOString()}); save(); closeModal(); render('reconciliation'); }
 
 function exportData(){ const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='nexus-accounting-pr-data.json'; a.click(); }
-function resetDemo(){ if(confirm('Esto reinicia la demo local.')){ localStorage.removeItem('nexusAccountingPR'); db=load(); render('dashboard'); } }
+function resetDemo(){ if(confirm('Esto reinicia los datos locales de esta cuenta.')){ localStorage.removeItem(currentStorageKey); db=load(currentUserUid); render('dashboard'); } }
 
-window.addEventListener('DOMContentLoaded',()=>{ document.getElementById('companyLabel').textContent=`${db.company.name} · Año Fiscal ${db.company.fiscalYear}`; });
+window.addEventListener('DOMContentLoaded',()=>{ document.getElementById('companyLabel').textContent=`${db.company.name||db.company.tradeName||'Crear empresa'} · Año Fiscal ${db.company.fiscalYear||new Date().getFullYear()}`; });
 
 // ===== v0.4 · Bandeja de Importación + Reconciliación Inteligente =====
 if(!navItems.some(n=>n[0]==='importTray')) navItems.splice(8,0,['importTray','Bandeja de Importación']);
@@ -443,8 +461,8 @@ function render(page){
 // ===== v0.7 · Configuración completa de Empresa + Asiento de Apertura =====
 function companyDefaults(){
   db.company ||= {};
-  db.company.legalName ||= db.company.name || 'Nexus Demo LLC';
-  db.company.tradeName ||= db.company.name || 'Nexus Demo LLC';
+  db.company.legalName ||= db.company.name || db.company.tradeName || '';
+  db.company.tradeName ||= db.company.name || db.company.legalName || '';
   db.company.ein ||= '';
   db.company.merchantRegistry ||= '';
   db.company.industry ||= 'Servicios profesionales';
@@ -483,7 +501,7 @@ function companyDefaults(){
   db.company.ivuPayableAccount ||= '2300';
   db.company.mainBankId ||= db.bankAccounts?.[0]?.id || 'bank-main';
   db.company.setupCompleted = db.company.setupCompleted ?? false;
-  db.users ||= [{id:'u-admin',name:'Administrador Demo',email:'admin@nexuspr.com',role:'Administrador',status:'Activo'}];
+  db.users ||= [];
   db.documents ||= [];
   db.openingBalances ||= {cash:0,bank:5000,ar:0,inventory:0,equipment:0,ap:0,loans:0,cards:0,capital:5000,retained:0};
   db.periods ||= [{id:'2026-06',year:2026,month:6,label:'Junio 2026',status:'Abierto',closedAt:null,closedBy:null}];
@@ -603,7 +621,7 @@ function saveCompanySettings(){
   c.ivuEnabled=cfgIvuEnabled.value==='true'; c.ivu=Number(cfgIvu.value||0); c.municipality=cfgMunicipality.value.trim(); c.withholdingEnabled=cfgWhEnabled.value==='true'; c.withholdingRate=Number(cfgWhRate.value||0);
   c.primaryColor=cfgPrimaryColor.value; document.documentElement.style.setProperty('--brand',c.primaryColor);
   db.audit.push({date:new Date().toISOString(),action:'Configuración de empresa actualizada',reference:c.tradeName});
-  save(); document.getElementById('companyLabel').textContent=`${c.tradeName} · Año Fiscal ${c.fiscalYear}`; render('settings');
+  save(); document.getElementById('companyLabel').textContent=`${c.tradeName||c.name||'Crear empresa'} · Año Fiscal ${c.fiscalYear}`; render('settings');
 }
 function loadCompanyLogo(ev){
   const file=ev.target.files?.[0]; if(!file) return;
@@ -651,7 +669,7 @@ function documentsConfigTable(){ if(!db.documents?.length) return '<div class="e
 function addDocumentConfig(){ const type=prompt('Tipo de documento:'); if(!type) return; const name=prompt('Nombre o descripción:')||type; db.documents.push({id:crypto.randomUUID(),type,name,date:today()}); save(); render('settings'); }
 
 const originalResetDemoV07 = resetDemo;
-resetDemo = function(){ if(confirm('Esto reinicia la demo local.')){ localStorage.removeItem('nexusAccountingPR'); db=load(); companyDefaults(); save(); render('dashboard'); } };
+resetDemo = function(){ if(confirm('Esto reinicia los datos locales de esta cuenta.')){ localStorage.removeItem(currentStorageKey); db=load(currentUserUid); companyDefaults(); save(); render('dashboard'); } };
 
 // ===== v0.8 · Accounting Engine + Firebase DEV adapter =====
 (function bootV08(){
@@ -1201,7 +1219,7 @@ function createOperationalCompanyFlow(){
     c.setupCompleted = c.operatingStatus==='Operativo';
     audit('Empresa operativa creada/actualizada',c.tradeName,{periodId,assets,liabilities,equity});
     save();
-    document.getElementById('companyLabel').textContent=`${c.tradeName} · Año Fiscal ${c.fiscalYear}`;
+    document.getElementById('companyLabel').textContent=`${c.tradeName||c.name||'Crear empresa'} · Año Fiscal ${c.fiscalYear}`;
     alert('Empresa operativa creada. Asiento de apertura registrado y Libro Mayor actualizado.');
     render('opening');
   }catch(e){ alert(e.message); }
@@ -1546,11 +1564,16 @@ async function getFirebaseAuthBundle(){
 }
 function showAppAfterAuth(user){
   nexusAuthUser=user;
+  switchTenant(user.uid);
   db.session={uid:user.uid,email:user.email||'',displayName:user.displayName||'',lastLogin:new Date().toISOString()};
   db.users ||= [];
   if(!db.users.some(u=>u.id===user.uid)){
     db.users.unshift({id:user.uid,name:user.displayName||user.email||'Usuario',email:user.email||'',role:'Administrador',status:'Activo'});
   }
+  db.company ||= {};
+  db.company.id ||= `company-${user.uid.slice(0,8)}`;
+  db.firebase ||= {};
+  db.firebase.devCompanyId ||= db.company.id;
   if(user.email) db.company.email ||= user.email;
   save();
   document.getElementById('loginView')?.classList.add('hidden');
@@ -1560,7 +1583,9 @@ function showAppAfterAuth(user){
 }
 async function upsertAuthUserProfile(user,extra={}){
   const {firestore,fsMod}=await getFirebaseAuthBundle();
-  const companyId=db.firebase?.devCompanyId || `company-${user.uid.slice(0,8)}`;
+  if(currentUserUid!==user.uid) switchTenant(user.uid);
+  const companyId=db.company?.id || db.firebase?.devCompanyId || `company-${user.uid.slice(0,8)}`;
+  db.firebase ||= {};
   db.firebase.devCompanyId=companyId;
   db.company.id=companyId;
   if(extra.companyName){ db.company.name=extra.companyName; db.company.tradeName=extra.companyName; db.company.legalName=extra.companyName; }
@@ -1634,6 +1659,12 @@ async function createAccount(){
     const {auth,authMod}=await getFirebaseAuthBundle();
     const cred=await authMod.createUserWithEmailAndPassword(auth,email,p1);
     await authMod.updateProfile(cred.user,{displayName:name});
+    currentUserUid=cred.user.uid;
+    currentStorageKey=storageKeyFor(cred.user.uid);
+    localStorage.removeItem(currentStorageKey);
+    db=freshDatabase();
+    db.company.id=`company-${cred.user.uid.slice(0,8)}`;
+    db.firebase ||= {}; db.firebase.devCompanyId=db.company.id;
     db.company.name=companyName; db.company.tradeName=companyName; db.company.legalName=companyName; db.company.email=email;
     await upsertAuthUserProfile(cred.user,{name,companyName,createdAt:new Date().toISOString()});
     setAuthStatus('Cuenta creada. Entrando al sistema...','ok');
@@ -1673,8 +1704,8 @@ async function bootAuthGate(){
     authMod.onAuthStateChanged(auth, async user=>{
       nexusAuthReady=true;
       if(user && user.email){
-        try{ await upsertAuthUserProfile(user); }catch(e){ console.warn('Perfil auth pendiente:',e.message); }
         showAppAfterAuth(user);
+        try{ await upsertAuthUserProfile(user); }catch(e){ console.warn('Perfil auth pendiente:',e.message); }
       }else{
         document.getElementById('appView')?.classList.add('hidden');
         document.getElementById('loginView')?.classList.remove('hidden');

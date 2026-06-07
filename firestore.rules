@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function companyDoc(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId));
+    }
+    function isOwner(companyId) {
+      return signedIn() && companyDoc(companyId).data.ownerUid == request.auth.uid;
+    }
+    function companyMember(companyId) {
+      return signedIn() && exists(/databases/$(database)/documents/companies/$(companyId)/users/$(request.auth.uid));
+    }
+    function companyAdmin(companyId) {
+      return companyMember(companyId) && get(/databases/$(database)/documents/companies/$(companyId)/users/$(request.auth.uid)).data.role in ['Administrador','Contador'];
+    }
+
+    match /companies/{companyId} {
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow read: if isOwner(companyId) || companyMember(companyId);
+      allow update: if isOwner(companyId) || companyAdmin(companyId);
+      allow delete: if false;
+
+      match /users/{uid} {
+        allow read: if isOwner(companyId) || companyMember(companyId);
+        allow create: if signedIn() && (uid == request.auth.uid || isOwner(companyId) || companyAdmin(companyId));
+        allow update: if isOwner(companyId) || companyAdmin(companyId);
+        allow delete: if false;
+      }
+
+      match /{collection}/{docId} {
+        allow read: if isOwner(companyId) || companyMember(companyId);
+        allow create, update: if isOwner(companyId) || companyAdmin(companyId);
+        allow delete: if false;
+      }
+    }
+  }
+}
