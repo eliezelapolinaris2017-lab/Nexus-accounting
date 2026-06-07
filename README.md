@@ -35,3 +35,9 @@ Corrección de Firebase DEV.
 - El logo ya no se guarda dentro del documento principal de company.
 - Intenta subir el logo a Firebase Storage y guarda la referencia.
 - Si Storage no está listo, sincroniza la empresa y deja el logo como local-only.
+
+
+## v0.9.1
+- Corrige sincronización Firestore: elimina arrays anidados antes de setDoc().
+- Health Check ahora se guarda como lista de objetos seguros.
+- Mantiene líneas del Libro Diario como subcolección journal_lines.

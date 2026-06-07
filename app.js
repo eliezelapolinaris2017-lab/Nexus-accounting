@@ -914,19 +914,36 @@ function withTimeout(promise,ms,label){
     new Promise((_,reject)=>setTimeout(()=>reject(new Error((label||'Operación')+' tardó demasiado. Revisa reglas/permisos de Firebase.')),ms))
   ]);
 }
-function sanitizeFirestoreDeep(value){
+function sanitizeFirestoreDeep(value, insideArray=false){
+  // Firestore no acepta undefined, archivos base64 pesados, ni arrays dentro de arrays.
+  // Esta función convierte cualquier estructura peligrosa en un documento seguro.
   if(value===undefined) return null;
   if(value===null || typeof value==='string' || typeof value==='number' || typeof value==='boolean') return value;
-  if(Array.isArray(value)) return value.map(sanitizeFirestoreDeep);
+  if(value instanceof Date) return value.toISOString();
+  if(Array.isArray(value)){
+    const cleaned=value.map(v=>sanitizeFirestoreDeep(v,true));
+    if(insideArray){
+      // Firestore rechaza nested arrays; lo convertimos en mapa estable.
+      return cleaned.reduce((obj,item,idx)=>{ obj[String(idx)]=item; return obj; },{});
+    }
+    return cleaned;
+  }
   if(typeof value==='object'){
     const out={};
     for(const [k,v] of Object.entries(value)){
-      if(k==='logoData') continue;
-      out[k]=sanitizeFirestoreDeep(v);
+      if(k==='logoData' || k==='logoBase64') continue;
+      out[k]=sanitizeFirestoreDeep(v,false);
     }
     return out;
   }
   return String(value);
+}
+function firestoreSafeHealth(h){
+  return {
+    pct:Number(h?.pct||0),
+    ready:!!h?.ready,
+    rows:(h?.rows||[]).map(r=>Array.isArray(r)?{name:String(r[0]),ok:!!r[1]}:sanitizeFirestoreDeep(r))
+  };
 }
 
 async function syncCompanyToFirestore(){
@@ -1218,8 +1235,8 @@ syncCompanyToFirestore = async function(){
     db.firebase.devCompanyId=companyId;
     const now=new Date().toISOString();
     const h=operationalHealth();
-    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId),sanitizeFirestoreDeep({...firestoreSafeCompanyDoc(db.company),ownerUid:uid,operationalHealth:h,updatedAt:now,source:'Nexus Accounting PR v0.9'}),{merge:true}),15000,'Guardar empresa');
-    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),sanitizeFirestoreDeep({companyId,activePeriod:db.activePeriod,sequences:db.sequences,openingBalances:db.openingBalances,health:h,updatedAt:now}),{merge:true}),15000,'Guardar settings');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId),sanitizeFirestoreDeep({...firestoreSafeCompanyDoc(db.company),ownerUid:uid,operationalHealth:firestoreSafeHealth(h),updatedAt:now,source:'Nexus Accounting PR v0.9.1'}),{merge:true}),15000,'Guardar empresa');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),sanitizeFirestoreDeep({companyId,activePeriod:db.activePeriod,sequences:db.sequences,openingBalances:db.openingBalances,health:firestoreSafeHealth(h),updatedAt:now}),{merge:true}),15000,'Guardar settings');
     await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'users',uid),sanitizeFirestoreDeep({uid,email:s.auth.currentUser.email||'anonymous-dev',role:'Administrador',status:'Activo',updatedAt:now}),{merge:true}),15000,'Guardar admin');
     for(const a of db.accounts||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',String(a.code)),sanitizeFirestoreDeep(a),{merge:true}),15000,'Guardar cuenta '+a.code);
     for(const b of db.bankAccounts||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',String(b.id)),sanitizeFirestoreDeep(b),{merge:true}),15000,'Guardar banco '+b.id);
@@ -1233,7 +1250,7 @@ syncCompanyToFirestore = async function(){
       await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'audit_logs',String(id)),sanitizeFirestoreDeep(log),{merge:true}),15000,'Guardar auditoría');
     }
     db.firebase.lastSync=now; db.firebase.lastCompanyPath='companies/'+companyId;
-    audit('Firebase sync v0.9 completado',companyId,{uid,health:h.pct});
+    audit('Firebase sync v0.9.1 completado',companyId,{uid,health:h.pct});
     save();
     setFirebaseStatus?.('sincronización completada en companies/'+companyId);
     alert('Sincronización completada: companies/'+companyId);
