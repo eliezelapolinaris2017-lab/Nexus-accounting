@@ -8,14 +8,39 @@
 </head>
 <body>
   <div id="loginView" class="login-wrap">
-    <section class="login-card">
+    <section class="login-card auth-card">
       <div class="brand-mark">N</div>
       <h1>Nexus Accounting PR</h1>
       <p>Portal de contabilidad profesional</p>
-      <input id="loginEmail" type="email" placeholder="Email" value="admin@nexuspr.com" />
-      <input id="loginPassword" type="password" placeholder="Contraseña" value="admin123" />
-      <button onclick="login()">Iniciar sesión</button>
-      <small>Acceso local de desarrollo: admin@nexuspr.com / admin123</small>
+
+      <div id="authLoginPanel" class="auth-panel">
+        <input id="loginEmail" type="email" placeholder="Email" autocomplete="email" />
+        <input id="loginPassword" type="password" placeholder="Contraseña" autocomplete="current-password" />
+        <label class="remember-row"><input id="rememberSession" type="checkbox" checked /> Recordarme</label>
+        <button onclick="login()">Iniciar sesión</button>
+        <div class="auth-links">
+          <button class="link-btn" onclick="showAuthPanel('reset')">¿Olvidó su contraseña?</button>
+          <button class="link-btn" onclick="showAuthPanel('register')">Crear una cuenta</button>
+        </div>
+      </div>
+
+      <div id="authRegisterPanel" class="auth-panel hidden">
+        <input id="regName" type="text" placeholder="Nombre completo" autocomplete="name" />
+        <input id="regCompany" type="text" placeholder="Nombre de empresa" />
+        <input id="regEmail" type="email" placeholder="Email" autocomplete="email" />
+        <input id="regPassword" type="password" placeholder="Contraseña" autocomplete="new-password" />
+        <input id="regPassword2" type="password" placeholder="Confirmar contraseña" autocomplete="new-password" />
+        <button onclick="createAccount()">Crear cuenta</button>
+        <div class="auth-links"><button class="link-btn" onclick="showAuthPanel('login')">Ya tengo cuenta</button></div>
+      </div>
+
+      <div id="authResetPanel" class="auth-panel hidden">
+        <input id="resetEmail" type="email" placeholder="Email para recuperación" autocomplete="email" />
+        <button onclick="resetPassword()">Enviar recuperación</button>
+        <div class="auth-links"><button class="link-btn" onclick="showAuthPanel('login')">Volver al login</button></div>
+      </div>
+
+      <small id="authStatus">Acceso seguro con Firebase Authentication</small>
     </section>
   </div>
 
@@ -41,6 +66,7 @@
           <button class="ghost" onclick="exportData()">Exportar JSON</button>
           <button class="ghost" onclick="render('opening')">Administrar Empresa</button>
           <button onclick="openModal('journal')">+ Nuevo asiento</button>
+          <button class="ghost" onclick="logout()">Salir</button>
         </div>
       </header>
 

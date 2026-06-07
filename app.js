@@ -1494,3 +1494,196 @@ const loginV10Previous = login;
 login = function(){ migrateToProductionMode(); document.getElementById('loginView').classList.add('hidden'); document.getElementById('appView').classList.remove('hidden'); renderNav(); render('dashboard'); };
 
 window.addEventListener('DOMContentLoaded',()=>{ try{ migrateToProductionMode(); refreshTopbar(); }catch(e){ console.warn(e); } });
+
+// ===== v1.1 · Firebase Email/Password Auth estilo Nexus Business =====
+const NEXUS_FIREBASE_DEFAULTS = {
+  enabled:true,
+  mode:'PRODUCTION_READY',
+  apiKey:'AIzaSyD9LW4cEV6NPC5wi7Zxrj6UKu0FeSUJZCI',
+  authDomain:'oasis-visit-card.firebaseapp.com',
+  projectId:'oasis-visit-card',
+  storageBucket:'oasis-visit-card.appspot.com',
+  messagingSenderId:'6930140490',
+  appId:'1:6930140490:web:66fb3902d8cfe93e4085b3'
+};
+let nexusAuthReady=false;
+let nexusAuthUser=null;
+
+function ensureFirebaseDefaults(){
+  db.firebase ||= {};
+  db.firebase = {...NEXUS_FIREBASE_DEFAULTS, ...db.firebase, enabled:true};
+  save();
+  return normalizeFirebaseConfig(db.firebase);
+}
+function setAuthStatus(msg,type=''){
+  const el=document.getElementById('authStatus');
+  if(el){ el.textContent=msg; el.className=type; }
+}
+function showAuthPanel(panel){
+  ['authLoginPanel','authRegisterPanel','authResetPanel'].forEach(id=>document.getElementById(id)?.classList.add('hidden'));
+  const target = panel==='register'?'authRegisterPanel':panel==='reset'?'authResetPanel':'authLoginPanel';
+  document.getElementById(target)?.classList.remove('hidden');
+  setAuthStatus(panel==='register'?'Crear cuenta segura con Firebase Authentication':panel==='reset'?'Recuperar acceso por email':'Acceso seguro con Firebase Authentication');
+}
+async function getFirebaseAuthBundle(){
+  const cfg=ensureFirebaseDefaults();
+  validateFirebaseConfig(cfg);
+  const { initializeApp, getApps, getApp, deleteApp } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
+  const authMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+  const fsMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
+  const appName='nexus-accounting-auth';
+  const existing=getApps().find(app=>app.name===appName);
+  let app;
+  if(existing){
+    const current=existing.options||{};
+    if(current.projectId!==cfg.projectId || current.appId!==cfg.appId || current.apiKey!==cfg.apiKey){
+      await deleteApp(existing); app=initializeApp(cfg,appName);
+    }else app=getApp(appName);
+  }else app=initializeApp(cfg,appName);
+  const auth=authMod.getAuth(app);
+  const firestore=fsMod.getFirestore(app);
+  return {app,auth,firestore,authMod,fsMod};
+}
+function showAppAfterAuth(user){
+  nexusAuthUser=user;
+  db.session={uid:user.uid,email:user.email||'',displayName:user.displayName||'',lastLogin:new Date().toISOString()};
+  db.users ||= [];
+  if(!db.users.some(u=>u.id===user.uid)){
+    db.users.unshift({id:user.uid,name:user.displayName||user.email||'Usuario',email:user.email||'',role:'Administrador',status:'Activo'});
+  }
+  if(user.email) db.company.email ||= user.email;
+  save();
+  document.getElementById('loginView')?.classList.add('hidden');
+  document.getElementById('appView')?.classList.remove('hidden');
+  migrateToProductionMode?.();
+  renderNav(); render('dashboard'); refreshTopbar?.();
+}
+async function upsertAuthUserProfile(user,extra={}){
+  const {firestore,fsMod}=await getFirebaseAuthBundle();
+  const companyId=db.firebase?.devCompanyId || `company-${user.uid.slice(0,8)}`;
+  db.firebase.devCompanyId=companyId;
+  db.company.id=companyId;
+  if(extra.companyName){ db.company.name=extra.companyName; db.company.tradeName=extra.companyName; db.company.legalName=extra.companyName; }
+  db.company.email ||= user.email||'';
+  db.company.operatingStatus ||= 'Configuración';
+  const now=new Date().toISOString();
+  await fsMod.setDoc(fsMod.doc(firestore,'users',user.uid),{
+    uid:user.uid,
+    name:user.displayName||extra.name||'',
+    email:user.email||'',
+    activeCompanyId:companyId,
+    role:'Administrador',
+    status:'Activo',
+    updatedAt:now,
+    createdAt:extra.createdAt||now
+  },{merge:true});
+  await fsMod.setDoc(fsMod.doc(firestore,'companies',companyId),{
+    id:companyId,
+    name:db.company.tradeName||db.company.name||extra.companyName||'Empresa sin configurar',
+    legalName:db.company.legalName||db.company.tradeName||'',
+    email:db.company.email||user.email||'',
+    fiscalYear:db.company.fiscalYear||new Date().getFullYear(),
+    ivu:db.company.ivu ?? 11.5,
+    ownerUid:user.uid,
+    operatingStatus:db.company.operatingStatus||'Configuración',
+    updatedAt:now,
+    createdAt:db.company.createdAt||now
+  },{merge:true});
+  await fsMod.setDoc(fsMod.doc(firestore,'companies',companyId,'users',user.uid),{
+    uid:user.uid,
+    email:user.email||'',
+    name:user.displayName||extra.name||'',
+    role:'Administrador',
+    status:'Activo',
+    updatedAt:now
+  },{merge:true});
+  db.firebase.lastSync=now;
+  db.firebase.lastCompanyPath='companies/'+companyId;
+  audit?.('Auth Firebase actualizado',companyId,{uid:user.uid,email:user.email});
+  save();
+}
+
+login = async function(){
+  try{
+    const email=(document.getElementById('loginEmail')?.value||'').trim();
+    const password=document.getElementById('loginPassword')?.value||'';
+    if(!email || !password) return setAuthStatus('Escribe email y contraseña.','err');
+    setAuthStatus('Autenticando...');
+    const {auth,authMod}=await getFirebaseAuthBundle();
+    await authMod.setPersistence(auth, document.getElementById('rememberSession')?.checked ? authMod.browserLocalPersistence : authMod.browserSessionPersistence);
+    const cred=await authMod.signInWithEmailAndPassword(auth,email,password);
+    await upsertAuthUserProfile(cred.user);
+    setAuthStatus('Acceso concedido.','ok');
+    showAppAfterAuth(cred.user);
+  }catch(e){
+    const msg=(e.code==='auth/user-not-found'||e.code==='auth/invalid-credential')?'Credenciales inválidas. Verifica email y contraseña.':e.message;
+    setAuthStatus(msg,'err');
+  }
+};
+
+async function createAccount(){
+  try{
+    const name=(regName.value||'').trim();
+    const companyName=(regCompany.value||'').trim();
+    const email=(regEmail.value||'').trim();
+    const p1=regPassword.value||'', p2=regPassword2.value||'';
+    if(!name || !companyName || !email || !p1) return setAuthStatus('Completa nombre, empresa, email y contraseña.','err');
+    if(p1.length<6) return setAuthStatus('La contraseña debe tener mínimo 6 caracteres.','err');
+    if(p1!==p2) return setAuthStatus('Las contraseñas no coinciden.','err');
+    setAuthStatus('Creando cuenta...');
+    const {auth,authMod}=await getFirebaseAuthBundle();
+    const cred=await authMod.createUserWithEmailAndPassword(auth,email,p1);
+    await authMod.updateProfile(cred.user,{displayName:name});
+    db.company.name=companyName; db.company.tradeName=companyName; db.company.legalName=companyName; db.company.email=email;
+    await upsertAuthUserProfile(cred.user,{name,companyName,createdAt:new Date().toISOString()});
+    setAuthStatus('Cuenta creada. Entrando al sistema...','ok');
+    showAppAfterAuth(cred.user);
+  }catch(e){
+    const msg=e.code==='auth/email-already-in-use'?'Ese email ya tiene cuenta. Usa iniciar sesión.':e.message;
+    setAuthStatus(msg,'err');
+  }
+}
+
+async function resetPassword(){
+  try{
+    const email=(resetEmail.value||loginEmail.value||'').trim();
+    if(!email) return setAuthStatus('Escribe el email para recuperar acceso.','err');
+    const {auth,authMod}=await getFirebaseAuthBundle();
+    await authMod.sendPasswordResetEmail(auth,email);
+    setAuthStatus('Email de recuperación enviado. Revisa tu bandeja.','ok');
+    showAuthPanel('login');
+  }catch(e){ setAuthStatus(e.message,'err'); }
+}
+
+async function logout(){
+  try{
+    const {auth,authMod}=await getFirebaseAuthBundle();
+    await authMod.signOut(auth);
+  }catch(e){ console.warn(e); }
+  nexusAuthUser=null;
+  document.getElementById('appView')?.classList.add('hidden');
+  document.getElementById('loginView')?.classList.remove('hidden');
+  showAuthPanel('login');
+}
+
+async function bootAuthGate(){
+  try{
+    ensureFirebaseDefaults();
+    const {auth,authMod}=await getFirebaseAuthBundle();
+    authMod.onAuthStateChanged(auth, async user=>{
+      nexusAuthReady=true;
+      if(user && user.email){
+        try{ await upsertAuthUserProfile(user); }catch(e){ console.warn('Perfil auth pendiente:',e.message); }
+        showAppAfterAuth(user);
+      }else{
+        document.getElementById('appView')?.classList.add('hidden');
+        document.getElementById('loginView')?.classList.remove('hidden');
+        setAuthStatus('Acceso seguro con Firebase Authentication');
+      }
+    });
+  }catch(e){
+    setAuthStatus('Configura Firebase antes de iniciar sesión: '+e.message,'err');
+  }
+}
+
+window.addEventListener('DOMContentLoaded',()=>{ bootAuthGate(); });
