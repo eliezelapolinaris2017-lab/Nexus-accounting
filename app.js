@@ -848,6 +848,7 @@ async function getFirebaseServices(){
   const { initializeApp, getApps, getApp, deleteApp } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
   const { getAuth, signInAnonymously } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
   const { getFirestore, doc, setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
+  const { getStorage, ref, uploadString, getDownloadURL } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js');
   const firebaseConfig=normalizeFirebaseConfig(cfg);
   validateFirebaseConfig(firebaseConfig);
   const appName='nexus-accounting-dev';
@@ -869,7 +870,8 @@ async function getFirebaseServices(){
     catch(err){ throw new Error('Firebase Auth no está activo. En Firebase Console activa Authentication → Sign-in method → Anonymous. Detalle: '+err.message); }
   }
   const firestore=getFirestore(nexusFirebaseApp);
-  return {auth,firestore,doc,setDoc};
+  const storage=getStorage(nexusFirebaseApp);
+  return {auth,firestore,storage,doc,setDoc,ref,uploadString,getDownloadURL};
 }
 async function testFirebaseConnection(){
   try{
@@ -877,23 +879,47 @@ async function testFirebaseConnection(){
     alert('Conexión Firebase OK. UID DEV: '+s.auth.currentUser.uid);
   }catch(e){ alert('Prueba fallida: '+e.message); }
 }
+function firestoreSafeCompanyDoc(company){
+  const doc={...company};
+  // Firestore tiene límite de 1 MiB por documento. El logo en base64 puede romper la sincronización.
+  if(doc.logoData && doc.logoData.length > 750000){
+    doc.logoData='';
+    doc.logoStatus='stored-in-storage-or-local';
+    doc.logoNote='Logo omitido del documento principal por límite Firestore. Se intenta subir a Storage.';
+  }
+  return doc;
+}
+async function tryUploadCompanyLogo(s,companyId){
+  if(!db.company.logoData || db.company.logoData.length < 1000) return null;
+  try{
+    const path=`companies/${companyId}/branding/logo_${Date.now()}.txt`;
+    const r=s.ref(s.storage,path);
+    await s.uploadString(r,db.company.logoData,'raw',{contentType:'text/plain'});
+    const url=await s.getDownloadURL(r);
+    return {logoStoragePath:path,logoUrl:url,logoStatus:'stored-in-firebase-storage'};
+  }catch(err){
+    return {logoStatus:'local-only',logoUploadError:err.message};
+  }
+}
 async function syncCompanyToFirestore(){
   try{
     const s=await getFirebaseServices(); const companyId=db.company.id||'dev-company'; const uid=s.auth.currentUser.uid;
-    await s.setDoc(s.doc(s.firestore,'companies',companyId),{...db.company,ownerUid:uid,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8.1'},{merge:true});
+    const logoInfo=await tryUploadCompanyLogo(s,companyId);
+    const companyDoc={...firestoreSafeCompanyDoc(db.company),...(logoInfo||{}),ownerUid:uid,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8.4'};
+    await s.setDoc(s.doc(s.firestore,'companies',companyId),companyDoc,{merge:true});
     await s.setDoc(s.doc(s.firestore,'companies',companyId,'users',uid),{uid,email:s.auth.currentUser.email||'anonymous-dev',role:'Administrador',status:'Activo',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});
     await s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),{sequences:db.sequences,activePeriod:db.activePeriod,setupProgress:setupProgress().pct,updatedAt:new Date().toISOString()},{merge:true});
     for(const a of db.accounts) await s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',String(a.code)),a,{merge:true});
     for(const b of db.bankAccounts||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',String(b.id)),b,{merge:true});
     for(const p of db.periods||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'periods',String(p.id)),p,{merge:true});
     for(const e of (db.entries||[]).slice(-100)) await s.setDoc(s.doc(s.firestore,'companies',companyId,'journal_entries',String(e.id)),e,{merge:true});
-    db.firebase.lastSync=new Date().toISOString(); audit('Firebase sync ejecutado',companyId,{projectId:db.firebase.projectId,uid}); save(); alert('Sincronización completada. Revisa Firestore: companies/'+companyId); render('firebase');
+    db.firebase.lastSync=new Date().toISOString(); audit('Firebase sync ejecutado',companyId,{projectId:db.firebase.projectId,uid,logoInfo}); save(); alert('Sincronización completada. Revisa Firestore: companies/'+companyId); render('firebase');
   }catch(e){ alert('No se pudo sincronizar: '+e.message); }
 }
 function downloadFirebaseRules(){ alert('El ZIP incluye reglas actualizadas. Importante: publica firestore.rules antes de sincronizar datos reales.'); }
 function exportAccountingPackage(){
-  const pack={version:'0.8.1',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
-  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.1.json`; a.click();
+  const pack={version:'0.8.4',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.4.json`; a.click();
 }
 
 const renderV07 = render;
