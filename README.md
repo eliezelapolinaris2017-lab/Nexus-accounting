@@ -1,49 +1,31 @@
-# Nexus Accounting PR v0.4
+# Nexus Accounting PR v0.6
 
-Portal de contabilidad profesional enfocado exclusivamente en contabilidad.
+Portal web de contabilidad profesional enfocado en ciclo contable.
 
-## Nuevo en v0.4
+## Nuevo en v0.6
+- Motor de Estados Financieros.
+- Balance de Comprobación.
+- Estado de Resultados.
+- Balance General con validación Activos = Pasivos + Capital + Utilidad.
+- Flujo de Efectivo inicial.
+- Validación Contable por período.
+- Cierre Mensual Asistido.
+- Paquete contable exportable JSON.
+- Exportación CSV del Balance de Comprobación.
 
-- Bandeja de Importación para estados de cuenta.
-- Carga de CSV/TXT bancario.
-- Plantilla CSV descargable.
-- Reconciliación automática inteligente con score de coincidencia.
-- Reconciliación manual por candidato sugerido.
-- Panel de candidatos entre libro contable y estado bancario.
-- Desvincular partidas conciliadas.
-- Cierre de reconciliación con historial.
-- Ajustes contables automáticos por diferencias bancarias.
+## Incluye desde versiones anteriores
+- Login demo.
+- Dashboard contable.
+- Catálogo de cuentas.
+- Libro Diario.
+- Libro Mayor.
+- Facturación.
+- Cobros.
+- Gastos.
+- Bancos.
+- Impuestos/IVU.
+- Bandeja de Importación.
+- Reconciliaciones automáticas y manuales.
 
-## Flujo recomendado
-
-1. Crear facturas, cobros o gastos.
-2. Ir a Bandeja de Importación.
-3. Subir CSV del banco.
-4. Ejecutar Auto reconciliar.
-5. Revisar candidatos sugeridos.
-6. Conciliar manualmente lo pendiente.
-7. Crear ajuste si hay cargo/interés no registrado.
-8. Cerrar reconciliación.
-
-## Formato CSV aceptado
-
-Columnas recomendadas:
-
-```csv
-date,description,reference,amount
-2026-06-01,DEP CLIENTE DEMO,INV-2026-000001,111.50
-2026-06-02,BANK SERVICE FEE,FEE-001,-15.00
-```
-
-También reconoce encabezados en español: fecha, descripcion, referencia, monto.
-
-## Demo
-
-Abrir `index.html` en el navegador.
-
-Login demo:
-
-- Email: admin@nexuspr.com
-- Password: admin123
-
-Los datos se guardan localmente en el navegador usando localStorage.
+## Uso
+Abre `index.html` en el navegador. Los datos se guardan localmente en `localStorage`.
