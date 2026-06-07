@@ -1,22 +1,34 @@
-# Nexus Accounting PR v0.1
+# Nexus Accounting PR v0.2
 
-Primer entregable funcional del portal de contabilidad profesional.
+Portal web local de contabilidad profesional.
 
 ## Incluye
 
-- Login demo local.
-- Dashboard contable.
-- Catálogo de cuentas base.
-- Libro Diario.
-- Libro Mayor.
-- Facturación con asiento automático de doble partida.
-- Cobro de factura con asiento automático.
-- Registro de gasto con doble partida.
-- Bancos.
-- IVU configurable.
-- Estados financieros básicos.
-- Exportación JSON.
-- Diseño responsive.
+- Login demo
+- Dashboard contable
+- Catálogo de cuentas
+- Libro Diario
+- Libro Mayor
+- Facturación con IVU
+- Cobros con doble partida
+- Gastos con doble partida
+- Bancos
+- Reconciliaciones bancarias
+- Ajustes automáticos de reconciliación
+- Impuestos
+- Estados financieros básicos
+- Exportación JSON
+
+## Reconciliaciones
+
+El módulo de Reconciliaciones permite:
+
+1. Ver movimientos bancarios pendientes.
+2. Marcar movimientos como conciliados.
+3. Comparar balance del banco vs movimientos marcados.
+4. Ver diferencia en tiempo real.
+5. Crear ajuste por cargos bancarios o intereses no registrados.
+6. Cerrar la reconciliación con historial.
 
 ## Uso
 
@@ -25,8 +37,6 @@ Abrir `index.html` en el navegador.
 Demo:
 
 - Email: admin@nexuspr.com
-- Contraseña: admin123
+- Password: admin123
 
-## Nota técnica
-
-Esta versión usa `localStorage` para prototipo. La próxima fase debe migrar la persistencia a Firebase o backend SQL.
+Los datos se guardan en `localStorage` del navegador.
