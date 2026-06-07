@@ -439,3 +439,216 @@ function render(page){
   document.getElementById('content').innerHTML = (map[page]||dashboard)();
   if(page==='reconciliation') setTimeout(updateRecSummary,0);
 }
+
+// ===== v0.7 · Configuración completa de Empresa + Asiento de Apertura =====
+function companyDefaults(){
+  db.company ||= {};
+  db.company.legalName ||= db.company.name || 'Nexus Demo LLC';
+  db.company.tradeName ||= db.company.name || 'Nexus Demo LLC';
+  db.company.ein ||= '';
+  db.company.merchantRegistry ||= '';
+  db.company.industry ||= 'Servicios profesionales';
+  db.company.entityType ||= 'LLC';
+  db.company.foundedDate ||= '';
+  db.company.currency ||= 'USD';
+  db.company.fiscalYear ||= 2026;
+  db.company.fiscalStart ||= `${db.company.fiscalYear}-01-01`;
+  db.company.fiscalEnd ||= `${db.company.fiscalYear}-12-31`;
+  db.company.accountingMethod ||= 'Accrual';
+  db.company.periodFrequency ||= 'Mensual';
+  db.company.phone ||= '';
+  db.company.email ||= '';
+  db.company.website ||= '';
+  db.company.address1 ||= '';
+  db.company.address2 ||= '';
+  db.company.city ||= '';
+  db.company.state ||= 'PR';
+  db.company.zip ||= '';
+  db.company.country ||= 'Puerto Rico';
+  db.company.logoData ||= '';
+  db.company.primaryColor ||= '#0f2a52';
+  db.company.accentColor ||= '#0f8a5f';
+  db.company.invoicePrefix ||= 'INV';
+  db.company.paymentPrefix ||= 'PAY';
+  db.company.journalPrefix ||= 'JE';
+  db.company.nextInvoice ||= 1;
+  db.company.nextPayment ||= 1;
+  db.company.nextJournal ||= 1;
+  db.company.ivuEnabled = db.company.ivuEnabled ?? true;
+  db.company.ivu = Number(db.company.ivu ?? 11.5);
+  db.company.municipality ||= '';
+  db.company.withholdingEnabled = db.company.withholdingEnabled ?? false;
+  db.company.withholdingRate ||= 0;
+  db.company.taxableSalesAccount ||= '4100';
+  db.company.ivuPayableAccount ||= '2300';
+  db.company.mainBankId ||= db.bankAccounts?.[0]?.id || 'bank-main';
+  db.company.setupCompleted = db.company.setupCompleted ?? false;
+  db.users ||= [{id:'u-admin',name:'Administrador Demo',email:'admin@nexuspr.com',role:'Administrador',status:'Activo'}];
+  db.documents ||= [];
+  db.openingBalances ||= {cash:0,bank:5000,ar:0,inventory:0,equipment:0,ap:0,loans:0,cards:0,capital:5000,retained:0};
+  db.periods ||= [{id:'2026-06',year:2026,month:6,label:'Junio 2026',status:'Abierto',closedAt:null,closedBy:null}];
+  db.activePeriod ||= db.periods[0]?.id || '2026-06';
+  db.audit ||= [];
+}
+companyDefaults(); save();
+
+function setupProgress(){
+  companyDefaults();
+  const c=db.company, ob=db.openingBalances||{};
+  const steps=[
+    {name:'Información general',ok:!!(c.tradeName && c.legalName && c.entityType && c.fiscalYear)},
+    {name:'Contacto',ok:!!(c.phone || c.email || c.address1)},
+    {name:'Configuración contable',ok:!!(c.accountingMethod && c.periodFrequency && c.invoicePrefix && c.journalPrefix)},
+    {name:'Impuestos',ok:typeof c.ivu==='number' && c.ivu>=0},
+    {name:'Bancos',ok:(db.bankAccounts||[]).length>0},
+    {name:'Saldos iniciales',ok:Object.values(ob).some(v=>Number(v||0)!==0)},
+    {name:'Período inicial',ok:(db.periods||[]).length>0 && !!db.activePeriod},
+  ];
+  const pct=Math.round((steps.filter(s=>s.ok).length/steps.length)*100);
+  return {steps,pct};
+}
+
+function settings(){
+  companyDefaults();
+  const p=setupProgress();
+  const c=db.company;
+  const logo=c.logoData?`<img src="${c.logoData}" alt="Logo">`:'LOGO';
+  return `<div class="grid two">
+    <div class="card">
+      <div class="section-title"><h3>Expediente Maestro de Empresa</h3><span class="badge ${p.pct===100?'green':'amber'}">${p.pct}% completo</span></div>
+      <div class="progress"><span style="width:${p.pct}%"></span></div>
+      <div class="step-list" style="margin-top:14px">${p.steps.map(s=>`<div class="step-item"><strong>${s.name}</strong>${s.ok?'<span class="badge green">OK</span>':'<span class="badge amber">Pendiente</span>'}</div>`).join('')}</div>
+      <div class="actions"><button onclick="markSetupComplete()">Marcar configuración completada</button><button class="ghost" onclick="createOpeningPeriod()">Crear período inicial</button></div>
+    </div>
+    <div class="card">
+      <div class="section-title"><h3>Identidad</h3><div class="logo-preview">${logo}</div></div>
+      <div class="form-grid">
+        <label>Logo<input type="file" accept="image/*" onchange="loadCompanyLogo(event)"></label>
+        <label>Color principal<input id="cfgPrimaryColor" type="color" value="${c.primaryColor}"></label>
+        <label>Nombre comercial<input id="cfgTradeName" value="${escapeAttr(c.tradeName)}"></label>
+        <label>Razón social<input id="cfgLegalName" value="${escapeAttr(c.legalName)}"></label>
+      </div>
+    </div>
+  </div>
+  <div class="card config-section">
+    <div class="section-title"><h3>Configuración completa</h3><button onclick="saveCompanySettings()">Guardar empresa</button></div>
+    <div class="tabs"><span class="tab">General</span><span class="tab">Contacto</span><span class="tab">Contable</span><span class="tab">Impuestos</span><span class="tab">Bancos</span><span class="tab">Saldos iniciales</span></div>
+    <h3>Información General</h3>
+    <div class="form-grid">
+      <label>Nombre comercial<input id="cfgName" value="${escapeAttr(c.tradeName)}"></label>
+      <label>Razón social<input id="cfgLegal" value="${escapeAttr(c.legalName)}"></label>
+      <label>EIN / Número patronal<input id="cfgEin" value="${escapeAttr(c.ein)}" placeholder="XX-XXXXXXX"></label>
+      <label>Registro de Comerciante<input id="cfgMerchant" value="${escapeAttr(c.merchantRegistry)}"></label>
+      <label>Industria<input id="cfgIndustry" value="${escapeAttr(c.industry)}"></label>
+      <label>Tipo de entidad<select id="cfgEntity">${['Individuo','LLC','Corporación','Partnership','Non-Profit'].map(x=>`<option ${c.entityType===x?'selected':''}>${x}</option>`).join('')}</select></label>
+      <label>Fecha constitución<input id="cfgFounded" type="date" value="${c.foundedDate}"></label>
+      <label>Moneda<select id="cfgCurrency"><option ${c.currency==='USD'?'selected':''}>USD</option></select></label>
+    </div>
+    <h3>Información de Contacto</h3>
+    <div class="form-grid">
+      <label>Dirección física<input id="cfgAddress1" value="${escapeAttr(c.address1)}"></label>
+      <label>Dirección postal<input id="cfgAddress2" value="${escapeAttr(c.address2)}"></label>
+      <label>Ciudad<input id="cfgCity" value="${escapeAttr(c.city)}"></label>
+      <label>Estado<input id="cfgState" value="${escapeAttr(c.state)}"></label>
+      <label>Código postal<input id="cfgZip" value="${escapeAttr(c.zip)}"></label>
+      <label>País<input id="cfgCountry" value="${escapeAttr(c.country)}"></label>
+      <label>Teléfono<input id="cfgPhone" value="${escapeAttr(c.phone)}"></label>
+      <label>Email<input id="cfgEmail" value="${escapeAttr(c.email)}"></label>
+      <label class="full">Website<input id="cfgWebsite" value="${escapeAttr(c.website)}"></label>
+    </div>
+    <h3>Configuración Contable</h3>
+    <div class="form-grid">
+      <label>Método contable<select id="cfgMethod"><option ${c.accountingMethod==='Efectivo'?'selected':''}>Efectivo</option><option ${c.accountingMethod==='Accrual'?'selected':''}>Accrual</option></select></label>
+      <label>Frecuencia de período<select id="cfgPeriodFreq"><option ${c.periodFrequency==='Mensual'?'selected':''}>Mensual</option><option ${c.periodFrequency==='Trimestral'?'selected':''}>Trimestral</option><option ${c.periodFrequency==='Anual'?'selected':''}>Anual</option></select></label>
+      <label>Año fiscal<input id="cfgFiscalYear" type="number" value="${c.fiscalYear}"></label>
+      <label>Banco principal<select id="cfgMainBank">${(db.bankAccounts||[]).map(b=>`<option value="${b.id}" ${c.mainBankId===b.id?'selected':''}>${b.name}</option>`).join('')}</select></label>
+      <label>Prefijo facturas<input id="cfgInvPrefix" value="${escapeAttr(c.invoicePrefix)}"></label>
+      <label>Próxima factura<input id="cfgNextInv" type="number" value="${c.nextInvoice}"></label>
+      <label>Prefijo pagos<input id="cfgPayPrefix" value="${escapeAttr(c.paymentPrefix)}"></label>
+      <label>Prefijo asientos<input id="cfgJePrefix" value="${escapeAttr(c.journalPrefix)}"></label>
+    </div>
+    <h3>Impuestos Puerto Rico</h3>
+    <div class="form-grid">
+      <label>IVU activo<select id="cfgIvuEnabled"><option value="true" ${c.ivuEnabled?'selected':''}>Sí</option><option value="false" ${!c.ivuEnabled?'selected':''}>No</option></select></label>
+      <label>IVU %<input id="cfgIvu" type="number" step="0.01" value="${c.ivu}"></label>
+      <label>Municipio<input id="cfgMunicipality" value="${escapeAttr(c.municipality)}"></label>
+      <label>Retenciones<select id="cfgWhEnabled"><option value="false" ${!c.withholdingEnabled?'selected':''}>No</option><option value="true" ${c.withholdingEnabled?'selected':''}>Sí</option></select></label>
+      <label>Retención %<input id="cfgWhRate" type="number" step="0.01" value="${c.withholdingRate}"></label>
+      <label>Cuenta IVU por pagar<select id="cfgIvuAcc">${accountOptions('liability')}</select></label>
+    </div>
+    <div class="actions"><button onclick="saveCompanySettings()">Guardar empresa</button></div>
+  </div>
+  <div class="grid two config-section">
+    <div class="card"><div class="section-title"><h3>Cuentas Bancarias</h3><button onclick="addBankAccountConfig()">+ Banco</button></div>${bankConfigTable()}${bankConfigForm()}</div>
+    <div class="card"><div class="section-title"><h3>Saldos Iniciales</h3><button onclick="saveOpeningBalances()">Generar asiento de apertura</button></div>${openingBalancesForm()}</div>
+  </div>
+  <div class="grid two config-section">
+    <div class="card"><div class="section-title"><h3>Usuarios y Roles</h3><button onclick="addUserConfig()">+ Usuario</button></div>${usersConfigTable()}</div>
+    <div class="card"><div class="section-title"><h3>Documentos Corporativos</h3><button onclick="addDocumentConfig()">Registrar documento</button></div>${documentsConfigTable()}</div>
+  </div>`;
+}
+
+function escapeAttr(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function saveCompanySettings(){
+  companyDefaults();
+  const c=db.company;
+  c.name=cfgName.value.trim() || cfgTradeName.value.trim() || c.name;
+  c.tradeName=cfgName.value.trim() || cfgTradeName.value.trim() || c.tradeName;
+  c.legalName=cfgLegal.value.trim() || cfgLegalName.value.trim() || c.legalName;
+  c.ein=cfgEin.value.trim(); c.merchantRegistry=cfgMerchant.value.trim(); c.industry=cfgIndustry.value.trim(); c.entityType=cfgEntity.value;
+  c.foundedDate=cfgFounded.value; c.currency=cfgCurrency.value; c.address1=cfgAddress1.value.trim(); c.address2=cfgAddress2.value.trim();
+  c.city=cfgCity.value.trim(); c.state=cfgState.value.trim(); c.zip=cfgZip.value.trim(); c.country=cfgCountry.value.trim(); c.phone=cfgPhone.value.trim(); c.email=cfgEmail.value.trim(); c.website=cfgWebsite.value.trim();
+  c.accountingMethod=cfgMethod.value; c.periodFrequency=cfgPeriodFreq.value; c.fiscalYear=Number(cfgFiscalYear.value||new Date().getFullYear()); c.mainBankId=cfgMainBank.value;
+  c.invoicePrefix=cfgInvPrefix.value.trim()||'INV'; c.paymentPrefix=cfgPayPrefix.value.trim()||'PAY'; c.journalPrefix=cfgJePrefix.value.trim()||'JE'; c.nextInvoice=Number(cfgNextInv.value||1);
+  c.ivuEnabled=cfgIvuEnabled.value==='true'; c.ivu=Number(cfgIvu.value||0); c.municipality=cfgMunicipality.value.trim(); c.withholdingEnabled=cfgWhEnabled.value==='true'; c.withholdingRate=Number(cfgWhRate.value||0);
+  c.primaryColor=cfgPrimaryColor.value; document.documentElement.style.setProperty('--brand',c.primaryColor);
+  db.audit.push({date:new Date().toISOString(),action:'Configuración de empresa actualizada',reference:c.tradeName});
+  save(); document.getElementById('companyLabel').textContent=`${c.tradeName} · Año Fiscal ${c.fiscalYear}`; render('settings');
+}
+function loadCompanyLogo(ev){
+  const file=ev.target.files?.[0]; if(!file) return;
+  const reader=new FileReader(); reader.onload=()=>{ db.company.logoData=reader.result; save(); render('settings'); }; reader.readAsDataURL(file);
+}
+function bankConfigTable(){
+  if(!db.bankAccounts?.length) return '<div class="empty">No hay cuentas bancarias.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Banco</th><th>Tipo</th><th>Últimos 4</th><th>Cuenta contable</th><th>Balance libro</th></tr></thead><tbody>${db.bankAccounts.map(b=>`<tr><td>${b.name}</td><td>${b.type||'Operacional'}</td><td>${b.last4||'----'}</td><td>${b.account}</td><td>${money(balanceByAccount(b.account))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function bankConfigForm(){ return `<hr><div class="form-grid"><label>Banco<input id="newBankName" placeholder="Banco Popular"></label><label>Tipo<select id="newBankType"><option>Operacional</option><option>Ahorro</option><option>Tarjeta</option><option>Procesador</option></select></label><label>Últimos 4<input id="newBankLast4" maxlength="4" placeholder="1234"></label><label>Balance inicial<input id="newBankOpening" type="number" step="0.01" value="0"></label></div>`; }
+function addBankAccountConfig(){
+  companyDefaults(); const name=newBankName.value.trim(); if(!name) return alert('Escribe el nombre del banco.');
+  const id=crypto.randomUUID(); db.bankAccounts.push({id,name,type:newBankType.value,last4:newBankLast4.value.trim(),account:'1200',balance:Number(newBankOpening.value||0),currency:'USD'});
+  db.company.mainBankId ||= id; db.audit.push({date:new Date().toISOString(),action:'Cuenta bancaria creada',reference:name}); save(); render('settings');
+}
+function openingBalancesForm(){
+  const o=db.openingBalances||{};
+  const fields=[['cash','Caja'],['bank','Bancos'],['ar','Cuentas por cobrar'],['inventory','Inventario'],['equipment','Equipos'],['ap','Cuentas por pagar'],['loans','Préstamos'],['cards','Tarjetas'],['capital','Capital aportado'],['retained','Utilidades retenidas']];
+  return `<p class="muted">Estos saldos crean el asiento de apertura. Debe cuadrar: Activos = Pasivos + Capital.</p><div class="form-grid">${fields.map(([k,l])=>`<label>${l}<input id="ob_${k}" type="number" step="0.01" value="${Number(o[k]||0)}"></label>`).join('')}</div><hr><div id="openingCheck">${openingBalanceCheck()}</div>`;
+}
+function openingBalanceCheck(){
+  const o=db.openingBalances||{}; const assets=Number(o.cash||0)+Number(o.bank||0)+Number(o.ar||0)+Number(o.inventory||0)+Number(o.equipment||0); const liab=Number(o.ap||0)+Number(o.loans||0)+Number(o.cards||0); const eq=Number(o.capital||0)+Number(o.retained||0); const diff=assets-liab-eq;
+  return `<div class="grid three"><div class="mini-stat"><span>Activos</span><strong>${money(assets)}</strong></div><div class="mini-stat"><span>Pasivos + Capital</span><strong>${money(liab+eq)}</strong></div><div class="mini-stat"><span>Diferencia</span><strong class="${Math.abs(diff)<.01?'positive':'warning'}">${money(diff)}</strong></div></div>`;
+}
+function saveOpeningBalances(){
+  const keys=['cash','bank','ar','inventory','equipment','ap','loans','cards','capital','retained'];
+  db.openingBalances={}; keys.forEach(k=>db.openingBalances[k]=Number(document.getElementById('ob_'+k).value||0));
+  const o=db.openingBalances; const assets=o.cash+o.bank+o.ar+o.inventory+o.equipment; const liab=o.ap+o.loans+o.cards; const eq=o.capital+o.retained; const diff=assets-liab-eq;
+  if(Math.abs(diff)>.01) return alert(`El asiento de apertura no cuadra. Diferencia: ${money(diff)}`);
+  db.entries = db.entries.filter(e=>e.reference!=='OPENING-BALANCE');
+  const lines=[]; if(o.cash) lines.push(line('1100',o.cash,0)); if(o.bank) lines.push(line('1200',o.bank,0)); if(o.ar) lines.push(line('1300',o.ar,0)); if(o.inventory) lines.push(line('1400',o.inventory,0)); if(o.equipment) lines.push(line('1500',o.equipment,0));
+  if(o.ap) lines.push(line('2100',0,o.ap)); if(o.loans) lines.push(line('2200',0,o.loans)); if(o.cards) lines.push(line('2200',0,o.cards)); if(o.capital) lines.push(line('3100',0,o.capital)); if(o.retained) lines.push(line('3200',0,o.retained));
+  if(lines.length) postEntry(entry(db.company.fiscalStart||`${db.company.fiscalYear}-01-01`,'Asiento de apertura de empresa','OPENING-BALANCE',lines));
+  db.audit.push({date:new Date().toISOString(),action:'Asiento de apertura generado',reference:'OPENING-BALANCE'}); save(); render('settings');
+}
+function createOpeningPeriod(){
+  companyDefaults(); const y=Number(db.company.fiscalYear||new Date().getFullYear()); const id=`${y}-01`; const label=`Enero ${y}`;
+  if(!db.periods.some(p=>p.id===id)) db.periods.unshift({id,year:y,month:1,label,status:'Abierto',closedAt:null,closedBy:null});
+  db.activePeriod=id; db.audit.push({date:new Date().toISOString(),action:'Período inicial creado',reference:label}); save(); render('settings');
+}
+function markSetupComplete(){ const p=setupProgress(); if(p.pct<100 && !confirm('La configuración no está al 100%. ¿Marcar como completada de todos modos?')) return; db.company.setupCompleted=true; db.audit.push({date:new Date().toISOString(),action:'Configuración inicial completada',reference:db.company.tradeName}); save(); render('settings'); }
+function usersConfigTable(){ return `<div class="table-wrap"><table class="table"><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th></tr></thead><tbody>${(db.users||[]).map(u=>`<tr><td>${u.name}</td><td>${u.email}</td><td><span class="badge">${u.role}</span></td><td>${u.status}</td></tr>`).join('')}</tbody></table></div>`; }
+function addUserConfig(){ const name=prompt('Nombre del usuario:'); if(!name) return; const email=prompt('Email:')||''; const role=prompt('Rol: Administrador, Contador, Auditor, Usuario','Usuario')||'Usuario'; db.users.push({id:crypto.randomUUID(),name,email,role,status:'Activo'}); save(); render('settings'); }
+function documentsConfigTable(){ if(!db.documents?.length) return '<div class="empty">Sin documentos registrados. Aquí se listarán registros, certificados y documentos contables de apertura.</div>'; return `<div class="table-wrap"><table class="table"><thead><tr><th>Tipo</th><th>Nombre</th><th>Fecha</th></tr></thead><tbody>${db.documents.map(d=>`<tr><td>${d.type}</td><td>${d.name}</td><td>${d.date}</td></tr>`).join('')}</tbody></table></div>`; }
+function addDocumentConfig(){ const type=prompt('Tipo de documento:'); if(!type) return; const name=prompt('Nombre o descripción:')||type; db.documents.push({id:crypto.randomUUID(),type,name,date:today()}); save(); render('settings'); }
+
+const originalResetDemoV07 = resetDemo;
+resetDemo = function(){ if(confirm('Esto reinicia la demo local.')){ localStorage.removeItem('nexusAccountingPR'); db=load(); companyDefaults(); save(); render('dashboard'); } };

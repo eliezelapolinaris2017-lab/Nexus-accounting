@@ -1,31 +1,29 @@
-# Nexus Accounting PR v0.6
+# Nexus Accounting PR v0.7
 
-Portal web de contabilidad profesional enfocado en ciclo contable.
+Portal web contable local/demo.
 
-## Nuevo en v0.6
-- Motor de Estados Financieros.
-- Balance de Comprobación.
-- Estado de Resultados.
-- Balance General con validación Activos = Pasivos + Capital + Utilidad.
-- Flujo de Efectivo inicial.
-- Validación Contable por período.
-- Cierre Mensual Asistido.
-- Paquete contable exportable JSON.
-- Exportación CSV del Balance de Comprobación.
+## Nuevo en v0.7
 
-## Incluye desde versiones anteriores
-- Login demo.
-- Dashboard contable.
-- Catálogo de cuentas.
-- Libro Diario.
-- Libro Mayor.
-- Facturación.
-- Cobros.
-- Gastos.
-- Bancos.
-- Impuestos/IVU.
-- Bandeja de Importación.
-- Reconciliaciones automáticas y manuales.
+- Configuración completa de empresa.
+- Expediente maestro con datos generales, fiscales, contacto e identidad.
+- Logo corporativo cargable.
+- Configuración contable: método, año fiscal, período, numeración.
+- Configuración de IVU, municipio y retenciones.
+- Cuentas bancarias múltiples.
+- Usuarios y roles base.
+- Documentos corporativos registrados.
+- Saldos iniciales.
+- Generación automática del asiento de apertura.
+- Creación del período inicial.
+- Progreso de implementación por pasos.
 
-## Uso
-Abre `index.html` en el navegador. Los datos se guardan localmente en `localStorage`.
+## Cómo usar
+
+Abre `index.html` en el navegador.
+
+Login demo:
+
+- Email: admin@nexuspr.com
+- Password: admin123
+
+La información se guarda en `localStorage` del navegador.
