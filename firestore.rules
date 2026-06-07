@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function companyMember(companyId) {
+      return signedIn() && exists(/databases/$(database)/documents/companies/$(companyId)/users/$(request.auth.uid));
+    }
+    function companyAdmin(companyId) {
+      return companyMember(companyId) && get(/databases/$(database)/documents/companies/$(companyId)/users/$(request.auth.uid)).data.role in ['Administrador','Contador'];
+    }
+
+    match /companies/{companyId} {
+      allow read: if companyMember(companyId);
+      allow create: if signedIn();
+      allow update: if companyAdmin(companyId);
+      allow delete: if false;
+
+      match /{collection}/{docId} {
+        allow read: if companyMember(companyId);
+        allow create, update: if companyAdmin(companyId);
+        allow delete: if false;
+      }
+    }
+  }
+}

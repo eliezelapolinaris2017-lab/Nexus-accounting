@@ -652,3 +652,203 @@ function addDocumentConfig(){ const type=prompt('Tipo de documento:'); if(!type)
 
 const originalResetDemoV07 = resetDemo;
 resetDemo = function(){ if(confirm('Esto reinicia la demo local.')){ localStorage.removeItem('nexusAccountingPR'); db=load(); companyDefaults(); save(); render('dashboard'); } };
+
+// ===== v0.8 · Accounting Engine + Firebase DEV adapter =====
+(function bootV08(){
+  if(!navItems.some(n=>n[0]==='engine')) navItems.splice(2,0,['engine','Motor Contable']);
+  if(!navItems.some(n=>n[0]==='firebase')) navItems.push(['firebase','Firebase DEV']);
+  migrateV08();
+})();
+
+function migrateV08(){
+  db.meta ||= {};
+  db.meta.version = '0.8';
+  db.company ||= {};
+  db.company.id ||= 'dev-company';
+  db.company.operatingStatus ||= db.company.setupCompleted ? 'Operativo' : 'Configuración';
+  db.sequences ||= { invoice: Number(db.company.nextInvoice||1), payment: Number(db.company.nextPayment||1), journal: Number(db.company.nextJournal||1), reconciliation: 1 };
+  db.engineTransactions ||= [];
+  db.incidents ||= [];
+  db.firebase ||= { enabled:false, projectId:'oasis-visit-card', lastSync:null, mode:'DEV' };
+  db.companyTemplates ||= defaultCompanyTemplates();
+  save();
+}
+
+function defaultCompanyTemplates(){
+  return [
+    {id:'services',name:'Servicios',accounts:['4100 Servicios','5100 Materiales','5200 Combustible','5500 Cargos Bancarios']},
+    {id:'commerce',name:'Comercio',accounts:['4100 Ventas','1400 Inventario','5100 Costo de ventas']},
+    {id:'construction',name:'Construcción',accounts:['4100 Contratos','5100 Materiales','5600 Subcontratistas']},
+    {id:'professional',name:'Profesional',accounts:['4200 Honorarios','5400 Publicidad','5300 Renta']},
+    {id:'custom',name:'Personalizado',accounts:[]}
+  ];
+}
+
+const NexusAccountingEngine = {
+  post({type,date=today(),description,reference,lines,source='manual',payload={}}){
+    if(!description) throw new Error('Falta descripción.');
+    const debit = lines.reduce((s,l)=>s+Number(l.debit||0),0);
+    const credit = lines.reduce((s,l)=>s+Number(l.credit||0),0);
+    if(Math.round(debit*100)!==Math.round(credit*100)) throw new Error('La transacción no cuadra.');
+    const ref = reference || nextSequence('journal');
+    const e = entry(date, description, ref, lines);
+    e.periodId = db.activePeriod;
+    e.source = source;
+    e.transactionType = type;
+    postEntry(e);
+    db.engineTransactions.push({id:crypto.randomUUID(),type,date,description,reference:ref,source,payload,entryId:e.id,createdAt:new Date().toISOString()});
+    audit('Motor contable: transacción registrada', ref, {type,description});
+    validateAccountingIntegrity();
+    save();
+    return e;
+  },
+  invoice({customer='Cliente',subtotal=0,taxRate=db.company.ivu||0,date=today()}){
+    const tax = Number(subtotal||0) * Number(taxRate||0) / 100;
+    const total = Number(subtotal||0) + tax;
+    const invNo = nextSequence('invoice');
+    db.invoices.push({id:crypto.randomUUID(),number:invNo,customer,date,subtotal,tax,total,status:'Pendiente',periodId:db.activePeriod});
+    return this.post({type:'invoice',date,description:`Factura ${invNo} - ${customer}`,reference:invNo,source:'invoice',payload:{customer,subtotal,tax,total},lines:[line('1300',total,0),line('4100',0,subtotal),line('2300',0,tax)]});
+  },
+  receipt({customer='Cliente',amount=0,bankAccount='1200',date=today(),reference}){
+    return this.post({type:'receipt',date,description:`Cobro recibido - ${customer}`,reference:reference||nextSequence('payment'),source:'payment',payload:{customer,amount},lines:[line(bankAccount,amount,0),line('1300',0,amount)]});
+  },
+  expense({category='5500',amount=0,bankAccount='1200',description='Gasto',date=today(),reference}){
+    return this.post({type:'expense',date,description,reference:reference||nextSequence('journal'),source:'expense',payload:{category,amount},lines:[line(category,amount,0),line(bankAccount,0,amount)]});
+  },
+  bankFee({amount=0,date=today(),description='Cargo bancario',bankAccount='1200'}){
+    return this.expense({category:'5500',amount,bankAccount,description,date,reference:nextSequence('journal')});
+  },
+  interest({amount=0,date=today(),bankAccount='1200'}){
+    return this.post({type:'interest',date,description:'Interés bancario',reference:nextSequence('journal'),source:'bank_adjustment',payload:{amount},lines:[line(bankAccount,amount,0),line('4300',0,amount)]});
+  }
+};
+
+function nextSequence(kind){
+  migrateV08();
+  const map={invoice:['invoice',db.company.invoicePrefix||'INV'],payment:['payment',db.company.paymentPrefix||'PAY'],journal:['journal',db.company.journalPrefix||'JE'],reconciliation:['reconciliation','REC']};
+  const [key,prefix]=map[kind]||map.journal;
+  const n=Number(db.sequences[key]||1);
+  db.sequences[key]=n+1;
+  return `${prefix}-${db.company.fiscalYear||new Date().getFullYear()}-${String(n).padStart(6,'0')}`;
+}
+function audit(action,reference,details={}){ db.audit ||= []; db.audit.push({date:new Date().toISOString(),action,reference,details,user:'local-dev'}); }
+
+function validateAccountingIntegrity(){
+  db.incidents=[];
+  for(const e of db.entries||[]){
+    const d=e.lines.reduce((s,l)=>s+Number(l.debit||0),0), c=e.lines.reduce((s,l)=>s+Number(l.credit||0),0);
+    if(Math.round(d*100)!==Math.round(c*100)) db.incidents.push({id:crypto.randomUUID(),severity:'alta',type:'asiento_descuadrado',reference:e.reference,message:`Asiento descuadrado: ${e.reference}`});
+    if(!e.periodId && e.reference!=='OPENING-BALANCE') db.incidents.push({id:crypto.randomUUID(),severity:'media',type:'sin_periodo',reference:e.reference,message:`Asiento sin período: ${e.reference}`});
+  }
+  const p=setupProgress?.();
+  if(p && p.pct<100) db.incidents.push({id:'setup-incomplete',severity:'media',type:'configuracion',reference:'SETUP',message:`Configuración incompleta: ${p.pct}%`});
+  const unrecon = unreconciledCount?.() || 0;
+  if(unrecon>0) db.incidents.push({id:'unreconciled',severity:'baja',type:'reconciliacion',reference:'BANK',message:`Movimientos bancarios sin reconciliar: ${unrecon}`});
+  save();
+  return db.incidents;
+}
+
+function engine(){
+  migrateV08();
+  const inc=validateAccountingIntegrity();
+  const trial=trialBalanceRows?.() || [];
+  const debit=trial.reduce((s,r)=>s+Number(r.debit||0),0), credit=trial.reduce((s,r)=>s+Number(r.credit||0),0);
+  return `<div class="grid three">
+    ${kpi('Asientos',db.entries.length,'Fuente oficial: Libro Diario','')}
+    ${kpi('Débitos',debit,'Balance de comprobación','')}
+    ${kpi('Créditos',credit,'Debe cuadrar con débitos',Math.round(debit*100)===Math.round(credit*100)?'':'warning')}
+  </div>
+  <div class="grid two config-section">
+    <div class="card"><div class="section-title"><h3>Accounting Engine</h3><span class="badge green">Doble partida activa</span></div>
+      <p class="muted">Toda operación genera asiento en Libro Diario y alimenta Libro Mayor, estados financieros, validación y cierre mensual.</p>
+      <div class="actions wrap">
+        <button onclick="engineDemoInvoice()">Crear factura demo</button>
+        <button onclick="engineDemoReceipt()">Registrar cobro demo</button>
+        <button onclick="engineDemoExpense()">Registrar gasto demo</button>
+        <button onclick="engineDemoFee()">Ajuste cargo bancario</button>
+      </div>
+    </div>
+    <div class="card"><div class="section-title"><h3>Incidencias Contables</h3><span class="badge ${inc.length?'amber':'green'}">${inc.length} pendientes</span></div>
+      ${inc.length?`<div class="step-list">${inc.map(i=>`<div class="step-item"><strong>${i.message}</strong><span class="badge ${i.severity==='alta'?'red':i.severity==='media'?'amber':'blue'}">${i.severity}</span></div>`).join('')}</div>`:'<div class="empty">No hay incidencias críticas. El motor contable está estable.</div>'}
+    </div>
+  </div>
+  <div class="card config-section"><div class="section-title"><h3>Últimas transacciones del motor</h3><button onclick="exportAccountingPackage()">Exportar paquete contable JSON</button></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Referencia</th><th>Descripción</th><th>Origen</th></tr></thead><tbody>${(db.engineTransactions||[]).slice(-12).reverse().map(t=>`<tr><td>${t.date}</td><td>${t.type}</td><td>${t.reference}</td><td>${t.description}</td><td>${t.source}</td></tr>`).join('')||'<tr><td colspan="5">Sin transacciones nuevas del motor.</td></tr>'}</tbody></table></div>
+  </div>`;
+}
+function engineDemoInvoice(){ try{ NexusAccountingEngine.invoice({customer:'Cliente Demo',subtotal:1000}); save(); render('engine'); }catch(e){ alert(e.message); } }
+function engineDemoReceipt(){ try{ NexusAccountingEngine.receipt({customer:'Cliente Demo',amount:1115}); save(); render('engine'); }catch(e){ alert(e.message); } }
+function engineDemoExpense(){ try{ NexusAccountingEngine.expense({category:'5200',amount:75,description:'Combustible operacional'}); save(); render('engine'); }catch(e){ alert(e.message); } }
+function engineDemoFee(){ try{ NexusAccountingEngine.bankFee({amount:15}); save(); render('engine'); }catch(e){ alert(e.message); } }
+
+function firebase(){
+  migrateV08();
+  const f=db.firebase||{};
+  return `<div class="grid two">
+    <div class="card"><div class="section-title"><h3>Firebase DEV</h3><span class="badge blue">${f.projectId||'oasis-visit-card'}</span></div>
+      <p class="muted">Este panel prepara Nexus Accounting PR para Firebase Auth, Firestore, Storage y Hosting. La configuración puede cargarse sin exponerla en el código principal.</p>
+      <div class="form-grid">
+        <label>API Key<input id="fbApiKey" value="${escapeAttr(f.apiKey||'')}"></label>
+        <label>Auth Domain<input id="fbAuthDomain" value="${escapeAttr(f.authDomain||'oasis-visit-card.firebaseapp.com')}"></label>
+        <label>Project ID<input id="fbProjectId" value="${escapeAttr(f.projectId||'oasis-visit-card')}"></label>
+        <label>Storage Bucket<input id="fbStorage" value="${escapeAttr(f.storageBucket||'oasis-visit-card.appspot.com')}"></label>
+        <label>Sender ID<input id="fbSender" value="${escapeAttr(f.messagingSenderId||'')}"></label>
+        <label>App ID<input id="fbAppId" value="${escapeAttr(f.appId||'')}"></label>
+      </div>
+      <div class="actions wrap"><button onclick="saveFirebaseConfigLocal()">Guardar config local</button><button onclick="syncCompanyToFirestore()">Sincronizar empresa</button><button onclick="downloadFirebaseRules()">Ver reglas incluidas</button></div>
+      <small>Modo actual: ${f.mode||'DEV'} · Última sincronización: ${f.lastSync||'Nunca'}</small>
+    </div>
+    <div class="card"><h3>Estructura Firestore</h3><pre class="code-block">companies/{companyId}
+  settings/main
+  users/{uid}
+  chart_accounts/{code}
+  bank_accounts/{bankId}
+  periods/{periodId}
+  journal_entries/{entryId}
+  audit_logs/{logId}</pre></div>
+  </div>`;
+}
+function saveFirebaseConfigLocal(){
+  db.firebase={enabled:true,mode:'DEV',apiKey:fbApiKey.value.trim(),authDomain:fbAuthDomain.value.trim(),projectId:fbProjectId.value.trim(),storageBucket:fbStorage.value.trim(),messagingSenderId:fbSender.value.trim(),appId:fbAppId.value.trim(),lastSync:db.firebase?.lastSync||null};
+  save(); alert('Configuración Firebase guardada localmente.'); render('firebase');
+}
+async function getFirebaseServices(){
+  const cfg=db.firebase||{};
+  if(!cfg.apiKey || !cfg.projectId || !cfg.appId) throw new Error('Falta completar la configuración Firebase.');
+  const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
+  const { getAuth, signInAnonymously } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+  const { getFirestore, doc, setDoc, collection } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
+  const app = initializeApp({apiKey:cfg.apiKey,authDomain:cfg.authDomain,projectId:cfg.projectId,storageBucket:cfg.storageBucket,messagingSenderId:cfg.messagingSenderId,appId:cfg.appId});
+  const auth=getAuth(app); if(!auth.currentUser) await signInAnonymously(auth);
+  const firestore=getFirestore(app);
+  return {auth,firestore,doc,setDoc,collection};
+}
+async function syncCompanyToFirestore(){
+  try{
+    const s=await getFirebaseServices(); const companyId=db.company.id||'dev-company';
+    await s.setDoc(s.doc(s.firestore,'companies',companyId),{...db.company,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8'});
+    await s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),{sequences:db.sequences,activePeriod:db.activePeriod,setupProgress:setupProgress().pct,updatedAt:new Date().toISOString()});
+    for(const a of db.accounts) await s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',a.code),a);
+    for(const b of db.bankAccounts||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',b.id),b);
+    for(const p of db.periods||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'periods',p.id),p);
+    db.firebase.lastSync=new Date().toISOString(); audit('Firebase sync ejecutado',companyId,{projectId:db.firebase.projectId}); save(); alert('Sincronización completada.'); render('firebase');
+  }catch(e){ alert('No se pudo sincronizar: '+e.message); }
+}
+function downloadFirebaseRules(){ alert('El ZIP incluye firestore.rules y storage.rules. Súbelas desde Firebase Console antes de producción.'); }
+function exportAccountingPackage(){
+  const pack={version:'0.8',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.json`; a.click();
+}
+
+const renderV07 = render;
+render = function(page){
+  migrateV08(); active=page; periodState?.();
+  document.getElementById('pageTitle').textContent=navItems.find(n=>n[0]===page)?.[1]||'Dashboard';
+  renderNav();
+  const map={dashboard,chart,engine,journal,ledger,invoices,ar,ap,banks,importTray,reconciliation,taxes,validation,financials,closing,settings,firebase};
+  document.getElementById('content').innerHTML = (map[page]||dashboard)();
+  if(page==='reconciliation') setTimeout(updateRecSummary,0);
+};
+
+const loginV08 = login;
+login = function(){ migrateV08(); document.getElementById('loginView').classList.add('hidden'); document.getElementById('appView').classList.remove('hidden'); renderNav(); render('dashboard'); };

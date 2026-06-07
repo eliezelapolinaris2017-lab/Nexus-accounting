@@ -1,29 +1,41 @@
-# Nexus Accounting PR v0.7
+# Nexus Accounting PR v0.8
 
-Portal web contable local/demo.
+Portal de contabilidad profesional enfocado en el ciclo contable.
 
-## Nuevo en v0.7
+## Nuevo en v0.8
 
-- Configuración completa de empresa.
-- Expediente maestro con datos generales, fiscales, contacto e identidad.
-- Logo corporativo cargable.
-- Configuración contable: método, año fiscal, período, numeración.
-- Configuración de IVU, municipio y retenciones.
-- Cuentas bancarias múltiples.
-- Usuarios y roles base.
-- Documentos corporativos registrados.
-- Saldos iniciales.
-- Generación automática del asiento de apertura.
-- Creación del período inicial.
-- Progreso de implementación por pasos.
+- Accounting Engine central.
+- Libro Diario como fuente oficial de verdad contable.
+- Transacciones automáticas de doble partida:
+  - Factura.
+  - Cobro.
+  - Gasto.
+  - Cargo bancario.
+  - Interés bancario.
+- Incidencias contables.
+- Paquete contable JSON.
+- Panel Firebase DEV.
+- Preparado para Firestore, Auth, Storage y Hosting.
+- Reglas `firestore.rules` y `storage.rules` incluidas.
+- Configuración Firebase local para usar el proyecto DEV `oasis-visit-card`.
 
-## Cómo usar
+## Uso
 
 Abre `index.html` en el navegador.
 
 Login demo:
 
-- Email: admin@nexuspr.com
-- Password: admin123
+- admin@nexuspr.com
+- admin123
 
-La información se guarda en `localStorage` del navegador.
+## Firebase
+
+1. Abre el módulo `Firebase DEV`.
+2. Pega la configuración del proyecto Firebase actual.
+3. Guarda la configuración local.
+4. Ejecuta `Sincronizar empresa`.
+5. Antes de producción, sube `firestore.rules` y `storage.rules` desde Firebase Console.
+
+## Principio contable
+
+Toda operación importante debe terminar en el Libro Diario mediante doble partida. Los estados financieros se alimentan desde el Libro Mayor, que deriva del Libro Diario.
