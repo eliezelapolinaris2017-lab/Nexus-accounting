@@ -18,7 +18,13 @@ Corrección de Firebase DEV.
 5. Abrir `index.html`, ir a Firebase DEV, guardar config, probar conexión, sincronizar empresa.
 
 
-## v0.8.2 hotfix
+## v0.8.3 hotfix
 - Corrige error Firebase duplicate-app usando app nombrada `nexus-accounting-dev`.
 - Limpia valores pegados con comillas, comas o punto y coma desde Firebase Console.
 - Permite cambiar configuración DEV sin chocar con otra app Firebase cargada en la página.
+
+
+## v0.8.3
+- Corrige error auth/api-key-not-valid limpiando comillas curvas, comas y etiquetas copiadas desde Firebase Console.
+- Valida que API Key empiece con AIza antes de sincronizar.
+- Mantiene app Firebase nombrada para evitar duplicate-app.

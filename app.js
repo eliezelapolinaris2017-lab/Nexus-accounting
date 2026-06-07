@@ -797,7 +797,7 @@ function firebase(){
       </div>
       <div class="actions wrap"><button onclick="saveFirebaseConfigLocal()">Guardar config local</button><button onclick="testFirebaseConnection()">Probar conexión</button><button onclick="syncCompanyToFirestore()">Sincronizar empresa</button><button onclick="downloadFirebaseRules()">Ver reglas incluidas</button></div>
       <small>Modo actual: ${f.mode||'DEV'} · Última sincronización: ${f.lastSync||'Nunca'}</small>
-      <p class="muted"><strong>Nota:</strong> para DEV activa Authentication → Anonymous o Email/Password en Firebase. Esta versión crea el usuario miembro antes de guardar subcolecciones.</p>
+      <p class="muted"><strong>Nota:</strong> pega los valores sin comillas ni coma. Si los pegas con formato de consola, la app ahora los limpia automáticamente. Para DEV activa Authentication → Anonymous.</p>
     </div>
     <div class="card"><h3>Estructura Firestore</h3><pre class="code-block">companies/{companyId}
   settings/main
@@ -810,11 +810,36 @@ function firebase(){
   </div>`;
 }
 function cleanFirebaseValue(value){
-  return String(value||'').trim().replace(/^['\"]+|['\",;]+$/g,'');
+  let v=String(value||'').trim();
+  // Limpia valores copiados directo desde Firebase Console: comillas, comas, punto y coma, llaves, etiquetas y comillas curvas.
+  v=v.replace(/[“”]/g,'\"').replace(/[‘’]/g,"'").trim();
+  v=v.replace(/^\s*[a-zA-Z0-9_]+\s*:\s*/,'');
+  v=v.replace(/[{}]/g,'').trim();
+  v=v.replace(/^[`'\"]+|[`'\",;]+$/g,'').trim();
+  return v;
+}
+function normalizeFirebaseConfig(raw){
+  return {
+    apiKey: cleanFirebaseValue(raw.apiKey),
+    authDomain: cleanFirebaseValue(raw.authDomain),
+    projectId: cleanFirebaseValue(raw.projectId),
+    storageBucket: cleanFirebaseValue(raw.storageBucket),
+    messagingSenderId: cleanFirebaseValue(raw.messagingSenderId),
+    appId: cleanFirebaseValue(raw.appId)
+  };
+}
+function validateFirebaseConfig(cfg){
+  if(!cfg.apiKey || !cfg.apiKey.startsWith('AIza')) throw new Error('API Key inválida. Pega solo el valor que empieza con AIza, sin comillas ni coma.');
+  if(!cfg.projectId) throw new Error('Falta Project ID.');
+  if(!cfg.appId || !cfg.appId.includes(':web:')) throw new Error('App ID inválido.');
 }
 function saveFirebaseConfigLocal(){
-  db.firebase={enabled:true,mode:'DEV',apiKey:cleanFirebaseValue(fbApiKey.value),authDomain:cleanFirebaseValue(fbAuthDomain.value),projectId:cleanFirebaseValue(fbProjectId.value),storageBucket:cleanFirebaseValue(fbStorage.value),messagingSenderId:cleanFirebaseValue(fbSender.value),appId:cleanFirebaseValue(fbAppId.value),lastSync:db.firebase?.lastSync||null};
-  save(); alert('Configuración Firebase guardada localmente.'); render('firebase');
+  try{
+    const cleaned=normalizeFirebaseConfig({apiKey:fbApiKey.value,authDomain:fbAuthDomain.value,projectId:fbProjectId.value,storageBucket:fbStorage.value,messagingSenderId:fbSender.value,appId:fbAppId.value});
+    validateFirebaseConfig(cleaned);
+    db.firebase={enabled:true,mode:'DEV',...cleaned,lastSync:db.firebase?.lastSync||null};
+    save(); alert('Configuración Firebase guardada localmente y saneada.'); render('firebase');
+  }catch(e){ alert(e.message); }
 }
 let nexusFirebaseApp = null;
 async function getFirebaseServices(){
@@ -823,7 +848,8 @@ async function getFirebaseServices(){
   const { initializeApp, getApps, getApp, deleteApp } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
   const { getAuth, signInAnonymously } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
   const { getFirestore, doc, setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
-  const firebaseConfig={apiKey:cleanFirebaseValue(cfg.apiKey),authDomain:cleanFirebaseValue(cfg.authDomain),projectId:cleanFirebaseValue(cfg.projectId),storageBucket:cleanFirebaseValue(cfg.storageBucket),messagingSenderId:cleanFirebaseValue(cfg.messagingSenderId),appId:cleanFirebaseValue(cfg.appId)};
+  const firebaseConfig=normalizeFirebaseConfig(cfg);
+  validateFirebaseConfig(firebaseConfig);
   const appName='nexus-accounting-dev';
   const existing=getApps().find(app=>app.name===appName);
   if(existing){
