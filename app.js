@@ -204,3 +204,117 @@ function exportData(){ const blob=new Blob([JSON.stringify(db,null,2)],{type:'ap
 function resetDemo(){ if(confirm('Esto reinicia la demo local.')){ localStorage.removeItem('nexusAccountingPR'); db=load(); render('dashboard'); } }
 
 window.addEventListener('DOMContentLoaded',()=>{ document.getElementById('companyLabel').textContent=`${db.company.name} · Año Fiscal ${db.company.fiscalYear}`; });
+
+// ===== v0.4 · Bandeja de Importación + Reconciliación Inteligente =====
+if(!navItems.some(n=>n[0]==='importTray')) navItems.splice(8,0,['importTray','Bandeja de Importación']);
+
+function render(page){
+  active=page;
+  document.getElementById('pageTitle').textContent=navItems.find(n=>n[0]===page)?.[1]||'Dashboard';
+  renderNav();
+  const map={dashboard,chart,journal,ledger,invoices,ar,ap,banks,importTray,reconciliation,taxes,financials,settings};
+  document.getElementById('content').innerHTML = (map[page]||dashboard)();
+  if(page==='reconciliation') setTimeout(updateRecSummary,0);
+}
+
+function importTray(){
+  const rows=(db.statementImports||[]).slice().reverse();
+  return `<div class="grid two">
+    <div class="card">
+      <div class="section-title"><h3>Bandeja de Importación</h3><button onclick="autoMatchStatement()">Auto reconciliar</button></div>
+      <p class="muted">Sube estados bancarios para que el sistema cree partidas de conciliación. Recomendado: CSV descargado desde Banco Popular, FirstBank, Oriental, Stripe, ATH Business, PayPal o Square.</p>
+      <div class="form-grid">
+        <label>Banco destino<select id="trayBank">${db.bankAccounts.map(b=>`<option value="${b.id}">${b.name}</option>`).join('')}</select></label>
+        <label>Tipo de archivo<select id="trayType"><option value="csv">CSV / TXT</option><option value="excel">Excel exportado como CSV</option></select></label>
+        <label class="full">Estado de cuenta<input id="statementFile" type="file" accept=".csv,.txt,text/csv,text/plain" onchange="importStatementCSV(event)"></label>
+      </div>
+      <div class="actions"><button class="ghost" onclick="downloadSampleCSV()">Descargar plantilla CSV</button><button class="ghost" onclick="openModal('statementLine')">+ Partida manual</button><button class="ghost" onclick="clearImportedStatement()">Limpiar pendientes</button></div>
+      <hr><h3>Formato aceptado</h3><p class="muted">Columnas: date, description, reference, amount. También reconoce fecha/descripción/referencia/monto, debit/credit o débito/crédito.</p>
+    </div>
+    <div class="card"><h3>Partidas importadas</h3>${statementImportTable(rows)}</div>
+  </div>`;
+}
+
+function reconciliation(){
+  const b=db.bankAccounts[0];
+  const open=bankLines(b.account).filter(r=>!isCleared(r.key));
+  const imported=(db.statementImports||[]).filter(x=>x.bankAccountId===b.id && !x.closed);
+  return `<div class="grid two">
+    <div class="card">
+      <div class="section-title"><h3>Centro de Reconciliación</h3><button onclick="finalizeReconciliation()">Cerrar reconciliación</button></div>
+      <div class="form-grid"><label>Banco<input id="recBank" value="${b.name}" disabled></label><label>Fecha del estado<input id="recDate" type="date" value="${today()}"></label><label>Balance según banco<input id="recStatement" type="number" step="0.01" value="${balanceByAccount(b.account).toFixed(2)}" oninput="updateRecSummary()"></label><label>Cuenta contable<input value="${b.account} · ${account(b.account).name}" disabled></label></div>
+      <hr><div id="recSummary">${reconciliationSummaryHtml()}</div>
+      <div class="actions"><button class="ghost" onclick="render('importTray')">Ir a Bandeja de Importación</button><button class="ghost" onclick="autoMatchStatement()">Auto reconciliar</button><button class="ghost" onclick="openModal('statementLine')">+ Partida manual</button></div>
+    </div>
+    <div class="card"><h3>Estado bancario importado</h3>${statementImportTable(imported)}</div>
+  </div>
+  <div class="grid two" style="margin-top:16px">
+    <div class="card"><h3>Movimientos del libro pendientes</h3>${bookPendingTable(open)}</div>
+    <div class="card"><h3>Candidatos sugeridos</h3>${candidateTable(open, imported)}</div>
+  </div>`;
+}
+
+function bookPendingTable(rows){
+  if(!rows.length) return '<div class="empty">No hay movimientos del libro pendientes.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th></th><th>Fecha</th><th>Ref.</th><th>Concepto</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead><tbody>${rows.map(r=>`<tr><td><input class="rec-check" type="checkbox" value="${r.key}" onchange="updateRecSummary()" ${isMatched(r.key)?'checked':''}></td><td>${r.date}</td><td>${r.reference}</td><td>${r.concept}</td><td>${r.amount>0?money(r.amount):'-'}</td><td>${r.amount<0?money(Math.abs(r.amount)):'-'}</td><td>${isMatched(r.key)?'<span class="badge green">Conciliado</span>':'<span class="badge amber">Pendiente</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function statementImportTable(rows){
+  if(!rows.length) return '<div class="empty">No hay partidas importadas del estado de cuenta.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Fecha</th><th>Descripción</th><th>Ref.</th><th>Monto</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.description}</td><td>${r.reference||'-'}</td><td>${money(r.amount)}</td><td>${r.bookKey?'<span class="badge green">Conciliada</span>':'<span class="badge amber">Pendiente</span>'}</td><td>${r.bookKey?`<button class="ghost mini" onclick="unmatchStatement('${r.id}')">Soltar</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function matchScore(book, st){
+  let score=0;
+  if(Math.abs(book.amount-st.amount)<.01) score+=55;
+  const days=Math.abs(new Date(book.date)-new Date(st.date))/86400000;
+  if(days===0) score+=25; else if(days<=2) score+=18; else if(days<=7) score+=10;
+  const text=(book.reference+' '+book.concept).toLowerCase();
+  const bank=(st.reference+' '+st.description).toLowerCase();
+  const tokens=bank.split(/\W+/).filter(x=>x.length>3);
+  const hits=tokens.filter(t=>text.includes(t)).length;
+  score+=Math.min(20,hits*5);
+  return Math.min(100,Math.round(score));
+}
+
+function candidateTable(open, imported){
+  const pendingImports=imported.filter(x=>!x.bookKey);
+  const candidates=[];
+  open.filter(b=>!isMatched(b.key)).forEach(book=>{
+    pendingImports.forEach(st=>{
+      const score=matchScore(book,st);
+      if(score>=55) candidates.push({book,st,score});
+    });
+  });
+  candidates.sort((a,b)=>b.score-a.score);
+  if(!candidates.length) return '<div class="empty">Sin candidatos automáticos. Usa conciliación manual o crea ajustes.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Score</th><th>Libro</th><th>Banco</th><th>Monto</th><th></th></tr></thead><tbody>${candidates.slice(0,12).map(c=>`<tr><td><span class="badge ${c.score>=85?'green':'amber'}">${c.score}%</span></td><td>${c.book.date}<br><small>${c.book.concept}</small></td><td>${c.st.date}<br><small>${c.st.description}</small></td><td>${money(c.book.amount)}</td><td><button class="mini" onclick="manualMatch('${c.book.key}','${c.st.id}')">Conciliar</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function autoMatchStatement(){
+  const b=db.bankAccounts[0];
+  const open=bankLines(b.account).filter(r=>!isCleared(r.key) && !isMatched(r.key));
+  const imported=(db.statementImports||[]).filter(x=>x.bankAccountId===b.id && !x.bookKey && !x.closed);
+  let matched=0;
+  imported.forEach(st=>{
+    const best=open.filter(bl=>!isMatched(bl.key)).map(bl=>({bl,score:matchScore(bl,st)})).sort((a,b)=>b.score-a.score)[0];
+    if(best && best.score>=80){ st.bookKey=best.bl.key; st.reconciled=true; st.score=best.score; matched++; }
+  });
+  db.audit.push({date:new Date().toISOString(),action:'Auto reconciliación inteligente ejecutada',reference:`${matched} partidas encontradas`});
+  save(); render('reconciliation'); alert(`${matched} partidas conciliadas automáticamente.`);
+}
+
+function manualMatch(bookKey, statementId){
+  const st=(db.statementImports||[]).find(x=>x.id===statementId);
+  if(!st) return alert('Partida bancaria no encontrada.');
+  st.bookKey=bookKey; st.reconciled=true; st.score=100; save(); render('reconciliation');
+}
+function unmatchStatement(statementId){
+  const st=(db.statementImports||[]).find(x=>x.id===statementId);
+  if(st){ st.bookKey=null; st.reconciled=false; delete st.score; save(); render(active); }
+}
+
+function downloadSampleCSV(){
+  const csv='date,description,reference,amount\n2026-06-01,DEP CLIENTE DEMO,INV-2026-000001,111.50\n2026-06-02,BANK SERVICE FEE,FEE-001,-15.00\n';
+  const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='plantilla_estado_bancario_nexus.csv'; a.click();
+}

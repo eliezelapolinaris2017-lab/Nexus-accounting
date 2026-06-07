@@ -1,47 +1,49 @@
-# Nexus Accounting PR v0.3
+# Nexus Accounting PR v0.4
 
-Portal web local de contabilidad profesional.
+Portal de contabilidad profesional enfocado exclusivamente en contabilidad.
 
-## Incluye
+## Nuevo en v0.4
 
-- Login demo
-- Dashboard contable
-- Catálogo de cuentas
-- Libro Diario
-- Libro Mayor
-- Facturación con IVU
-- Cobros con doble partida
-- Gastos con doble partida
-- Bancos
-- Reconciliaciones bancarias automáticas y manuales
-- Carga de estados de cuenta en CSV
-- Auto-match por fecha y monto
-- Partidas bancarias manuales
-- Ajustes automáticos de reconciliación
-- Impuestos
-- Estados financieros básicos
-- Exportación JSON
+- Bandeja de Importación para estados de cuenta.
+- Carga de CSV/TXT bancario.
+- Plantilla CSV descargable.
+- Reconciliación automática inteligente con score de coincidencia.
+- Reconciliación manual por candidato sugerido.
+- Panel de candidatos entre libro contable y estado bancario.
+- Desvincular partidas conciliadas.
+- Cierre de reconciliación con historial.
+- Ajustes contables automáticos por diferencias bancarias.
 
-## Reconciliaciones
+## Flujo recomendado
 
-El módulo permite:
+1. Crear facturas, cobros o gastos.
+2. Ir a Bandeja de Importación.
+3. Subir CSV del banco.
+4. Ejecutar Auto reconciliar.
+5. Revisar candidatos sugeridos.
+6. Conciliar manualmente lo pendiente.
+7. Crear ajuste si hay cargo/interés no registrado.
+8. Cerrar reconciliación.
 
-1. Subir estado de cuenta en CSV.
-2. Leer columnas en español o inglés: fecha/date, descripción/description, referencia/ref, débito/debit, crédito/credit, monto/amount.
-3. Ejecutar auto reconciliación por monto y fecha cercana.
-4. Reconciliar manualmente marcando movimientos.
-5. Registrar partidas manuales del estado bancario.
-6. Comparar balance banco vs movimientos marcados.
-7. Crear ajustes por cargos bancarios o intereses no registrados.
-8. Cerrar reconciliación con historial.
+## Formato CSV aceptado
 
-## Uso
+Columnas recomendadas:
+
+```csv
+date,description,reference,amount
+2026-06-01,DEP CLIENTE DEMO,INV-2026-000001,111.50
+2026-06-02,BANK SERVICE FEE,FEE-001,-15.00
+```
+
+También reconoce encabezados en español: fecha, descripcion, referencia, monto.
+
+## Demo
 
 Abrir `index.html` en el navegador.
 
-Demo:
+Login demo:
 
 - Email: admin@nexuspr.com
 - Password: admin123
 
-Los datos se guardan en `localStorage` del navegador.
+Los datos se guardan localmente en el navegador usando localStorage.
