@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexus Accounting PR</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="loginView" class="login-wrap">
+    <section class="login-card">
+      <div class="brand-mark">N</div>
+      <h1>Nexus Accounting PR</h1>
+      <p>Portal de contabilidad profesional</p>
+      <input id="loginEmail" type="email" placeholder="Email" value="admin@nexuspr.com" />
+      <input id="loginPassword" type="password" placeholder="Contraseña" value="admin123" />
+      <button onclick="login()">Iniciar sesión</button>
+      <small>Demo local: admin@nexuspr.com / admin123</small>
+    </section>
+  </div>
+
+  <div id="appView" class="app hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark small">N</div>
+        <div>
+          <strong>Nexus</strong>
+          <span>Accounting PR</span>
+        </div>
+      </div>
+      <nav id="mainNav"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="pageTitle">Dashboard</h2>
+          <p id="companyLabel">Nexus Demo LLC · Año Fiscal 2026</p>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" onclick="exportData()">Exportar JSON</button>
+          <button class="ghost" onclick="resetDemo()">Reset demo</button>
+          <button onclick="openModal('journal')">+ Nuevo asiento</button>
+        </div>
+      </header>
+
+      <section id="content"></section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="modalTitle"></h3>
+        <button class="icon" onclick="closeModal()">×</button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
