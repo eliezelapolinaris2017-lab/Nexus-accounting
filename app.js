@@ -662,7 +662,7 @@ resetDemo = function(){ if(confirm('Esto reinicia la demo local.')){ localStorag
 
 function migrateV08(){
   db.meta ||= {};
-  db.meta.version = '0.8';
+  db.meta.version = '0.8.1';
   db.company ||= {};
   db.company.id ||= 'dev-company';
   db.company.operatingStatus ||= db.company.setupCompleted ? 'Operativo' : 'Configuración';
@@ -791,12 +791,13 @@ function firebase(){
         <label>API Key<input id="fbApiKey" value="${escapeAttr(f.apiKey||'')}"></label>
         <label>Auth Domain<input id="fbAuthDomain" value="${escapeAttr(f.authDomain||'oasis-visit-card.firebaseapp.com')}"></label>
         <label>Project ID<input id="fbProjectId" value="${escapeAttr(f.projectId||'oasis-visit-card')}"></label>
-        <label>Storage Bucket<input id="fbStorage" value="${escapeAttr(f.storageBucket||'oasis-visit-card.appspot.com')}"></label>
+        <label>Storage Bucket<input id="fbStorage" value="${escapeAttr(f.storageBucket||'oasis-visit-card.firebasestorage.app')}"></label>
         <label>Sender ID<input id="fbSender" value="${escapeAttr(f.messagingSenderId||'')}"></label>
         <label>App ID<input id="fbAppId" value="${escapeAttr(f.appId||'')}"></label>
       </div>
-      <div class="actions wrap"><button onclick="saveFirebaseConfigLocal()">Guardar config local</button><button onclick="syncCompanyToFirestore()">Sincronizar empresa</button><button onclick="downloadFirebaseRules()">Ver reglas incluidas</button></div>
+      <div class="actions wrap"><button onclick="saveFirebaseConfigLocal()">Guardar config local</button><button onclick="testFirebaseConnection()">Probar conexión</button><button onclick="syncCompanyToFirestore()">Sincronizar empresa</button><button onclick="downloadFirebaseRules()">Ver reglas incluidas</button></div>
       <small>Modo actual: ${f.mode||'DEV'} · Última sincronización: ${f.lastSync||'Nunca'}</small>
+      <p class="muted"><strong>Nota:</strong> para DEV activa Authentication → Anonymous o Email/Password en Firebase. Esta versión crea el usuario miembro antes de guardar subcolecciones.</p>
     </div>
     <div class="card"><h3>Estructura Firestore</h3><pre class="code-block">companies/{companyId}
   settings/main
@@ -826,7 +827,7 @@ async function getFirebaseServices(){
 async function syncCompanyToFirestore(){
   try{
     const s=await getFirebaseServices(); const companyId=db.company.id||'dev-company';
-    await s.setDoc(s.doc(s.firestore,'companies',companyId),{...db.company,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8'});
+    await s.setDoc(s.doc(s.firestore,'companies',companyId),{...db.company,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8.1'});
     await s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),{sequences:db.sequences,activePeriod:db.activePeriod,setupProgress:setupProgress().pct,updatedAt:new Date().toISOString()});
     for(const a of db.accounts) await s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',a.code),a);
     for(const b of db.bankAccounts||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',b.id),b);
@@ -836,8 +837,8 @@ async function syncCompanyToFirestore(){
 }
 function downloadFirebaseRules(){ alert('El ZIP incluye firestore.rules y storage.rules. Súbelas desde Firebase Console antes de producción.'); }
 function exportAccountingPackage(){
-  const pack={version:'0.8',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
-  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.json`; a.click();
+  const pack={version:'0.8.1',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.1.json`; a.click();
 }
 
 const renderV07 = render;

@@ -1,41 +1,18 @@
-# Nexus Accounting PR v0.8
+# Nexus Accounting PR v0.8.1
 
-Portal de contabilidad profesional enfocado en el ciclo contable.
+Corrección de Firebase DEV.
 
-## Nuevo en v0.8
+## Qué corrige
+- Botón Probar conexión Firebase.
+- Autenticación anónima DEV con mensaje claro si no está activa.
+- Crea `ownerUid` en `companies/{companyId}`.
+- Crea primero `companies/{companyId}/users/{uid}` antes de guardar subcolecciones.
+- Reglas Firestore corregidas para owner/admin.
+- Storage bucket actualizado para `firebasestorage.app`.
 
-- Accounting Engine central.
-- Libro Diario como fuente oficial de verdad contable.
-- Transacciones automáticas de doble partida:
-  - Factura.
-  - Cobro.
-  - Gasto.
-  - Cargo bancario.
-  - Interés bancario.
-- Incidencias contables.
-- Paquete contable JSON.
-- Panel Firebase DEV.
-- Preparado para Firestore, Auth, Storage y Hosting.
-- Reglas `firestore.rules` y `storage.rules` incluidas.
-- Configuración Firebase local para usar el proyecto DEV `oasis-visit-card`.
-
-## Uso
-
-Abre `index.html` en el navegador.
-
-Login demo:
-
-- admin@nexuspr.com
-- admin123
-
-## Firebase
-
-1. Abre el módulo `Firebase DEV`.
-2. Pega la configuración del proyecto Firebase actual.
-3. Guarda la configuración local.
-4. Ejecuta `Sincronizar empresa`.
-5. Antes de producción, sube `firestore.rules` y `storage.rules` desde Firebase Console.
-
-## Principio contable
-
-Toda operación importante debe terminar en el Libro Diario mediante doble partida. Los estados financieros se alimentan desde el Libro Mayor, que deriva del Libro Diario.
+## Pasos mínimos en Firebase Console
+1. Authentication → Sign-in method → activar Anonymous para desarrollo.
+2. Firestore Database → crear base de datos.
+3. Rules → pegar el archivo `firestore.rules` incluido.
+4. Storage → crear bucket si vas a subir documentos luego.
+5. Abrir `index.html`, ir a Firebase DEV, guardar config, probar conexión, sincronizar empresa.
