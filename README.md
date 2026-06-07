@@ -16,3 +16,9 @@ Corrección de Firebase DEV.
 3. Rules → pegar el archivo `firestore.rules` incluido.
 4. Storage → crear bucket si vas a subir documentos luego.
 5. Abrir `index.html`, ir a Firebase DEV, guardar config, probar conexión, sincronizar empresa.
+
+
+## v0.8.2 hotfix
+- Corrige error Firebase duplicate-app usando app nombrada `nexus-accounting-dev`.
+- Limpia valores pegados con comillas, comas o punto y coma desde Firebase Console.
+- Permite cambiar configuración DEV sin chocar con otra app Firebase cargada en la página.
