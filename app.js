@@ -796,6 +796,7 @@ function firebase(){
         <label>App ID<input id="fbAppId" value="${escapeAttr(f.appId||'')}"></label>
       </div>
       <div class="actions wrap"><button onclick="saveFirebaseConfigLocal()">Guardar config local</button><button onclick="testFirebaseConnection()">Probar conexión</button><button onclick="syncCompanyToFirestore()">Sincronizar empresa</button><button onclick="downloadFirebaseRules()">Ver reglas incluidas</button></div>
+      <div id="firebaseStatus" class="notice">Estado: listo para probar conexión o sincronizar.</div>
       <small>Modo actual: ${f.mode||'DEV'} · Última sincronización: ${f.lastSync||'Nunca'}</small>
       <p class="muted"><strong>Nota:</strong> pega los valores sin comillas ni coma. Si los pegas con formato de consola, la app ahora los limpia automáticamente. Para DEV activa Authentication → Anonymous.</p>
     </div>
@@ -901,25 +902,83 @@ async function tryUploadCompanyLogo(s,companyId){
     return {logoStatus:'local-only',logoUploadError:err.message};
   }
 }
+
+function setFirebaseStatus(msg){
+  const el=document.getElementById('firebaseStatus');
+  if(el) el.textContent='Estado: '+msg;
+  console.log('[Nexus Firebase]', msg);
+}
+function withTimeout(promise,ms,label){
+  return Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error((label||'Operación')+' tardó demasiado. Revisa reglas/permisos de Firebase.')),ms))
+  ]);
+}
+function sanitizeFirestoreDeep(value){
+  if(value===undefined) return null;
+  if(value===null || typeof value==='string' || typeof value==='number' || typeof value==='boolean') return value;
+  if(Array.isArray(value)) return value.map(sanitizeFirestoreDeep);
+  if(typeof value==='object'){
+    const out={};
+    for(const [k,v] of Object.entries(value)){
+      if(k==='logoData') continue;
+      out[k]=sanitizeFirestoreDeep(v);
+    }
+    return out;
+  }
+  return String(value);
+}
+
 async function syncCompanyToFirestore(){
+  setFirebaseStatus('iniciando sincronización...');
   try{
-    const s=await getFirebaseServices(); const companyId=db.company.id||'dev-company'; const uid=s.auth.currentUser.uid;
-    const logoInfo=await tryUploadCompanyLogo(s,companyId);
-    const companyDoc={...firestoreSafeCompanyDoc(db.company),...(logoInfo||{}),ownerUid:uid,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8.4'};
-    await s.setDoc(s.doc(s.firestore,'companies',companyId),companyDoc,{merge:true});
-    await s.setDoc(s.doc(s.firestore,'companies',companyId,'users',uid),{uid,email:s.auth.currentUser.email||'anonymous-dev',role:'Administrador',status:'Activo',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});
-    await s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),{sequences:db.sequences,activePeriod:db.activePeriod,setupProgress:setupProgress().pct,updatedAt:new Date().toISOString()},{merge:true});
-    for(const a of db.accounts) await s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',String(a.code)),a,{merge:true});
-    for(const b of db.bankAccounts||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',String(b.id)),b,{merge:true});
-    for(const p of db.periods||[]) await s.setDoc(s.doc(s.firestore,'companies',companyId,'periods',String(p.id)),p,{merge:true});
-    for(const e of (db.entries||[]).slice(-100)) await s.setDoc(s.doc(s.firestore,'companies',companyId,'journal_entries',String(e.id)),e,{merge:true});
-    db.firebase.lastSync=new Date().toISOString(); audit('Firebase sync ejecutado',companyId,{projectId:db.firebase.projectId,uid,logoInfo}); save(); alert('Sincronización completada. Revisa Firestore: companies/'+companyId); render('firebase');
-  }catch(e){ alert('No se pudo sincronizar: '+e.message); }
+    const s=await withTimeout(getFirebaseServices(),15000,'Conexión Firebase');
+    const uid=s.auth.currentUser.uid;
+    // En DEV usamos un ID ligado al UID para evitar choques por documentos creados por otro usuario anónimo.
+    const baseCompanyId=db.company.id || 'dev-company';
+    const companyId=(db.firebase?.devCompanyId)||`${baseCompanyId}-${uid.slice(0,8)}`;
+    db.firebase.devCompanyId=companyId;
+
+    setFirebaseStatus('preparando empresa sin logo pesado...');
+    const safeCompany=sanitizeFirestoreDeep(firestoreSafeCompanyDoc(db.company));
+    const companyDoc={...safeCompany,ownerUid:uid,updatedAt:new Date().toISOString(),source:'Nexus Accounting PR v0.8.5',devCompanyId:companyId};
+
+    setFirebaseStatus('guardando documento principal companies/'+companyId+' ...');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId),companyDoc,{merge:true}),15000,'Guardar empresa');
+
+    setFirebaseStatus('creando usuario administrador...');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'users',uid),{uid,email:s.auth.currentUser.email||'anonymous-dev',role:'Administrador',status:'Activo',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true}),15000,'Guardar usuario admin');
+
+    setFirebaseStatus('guardando settings...');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),sanitizeFirestoreDeep({sequences:db.sequences,activePeriod:db.activePeriod,setupProgress:setupProgress().pct,updatedAt:new Date().toISOString()}),{merge:true}),15000,'Guardar settings');
+
+    setFirebaseStatus('guardando catálogo de cuentas...');
+    for(const a of db.accounts) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',String(a.code)),sanitizeFirestoreDeep(a),{merge:true}),15000,'Guardar cuenta '+a.code);
+
+    setFirebaseStatus('guardando bancos...');
+    for(const b of db.bankAccounts||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',String(b.id)),sanitizeFirestoreDeep(b),{merge:true}),15000,'Guardar banco '+b.id);
+
+    setFirebaseStatus('guardando períodos...');
+    for(const p of db.periods||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'periods',String(p.id)),sanitizeFirestoreDeep(p),{merge:true}),15000,'Guardar período '+p.id);
+
+    setFirebaseStatus('guardando libro diario...');
+    for(const e of (db.entries||[]).slice(-100)) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'journal_entries',String(e.id)),sanitizeFirestoreDeep(e),{merge:true}),15000,'Guardar asiento '+e.id);
+
+    db.firebase.lastSync=new Date().toISOString();
+    audit('Firebase sync ejecutado',companyId,{projectId:db.firebase.projectId,uid});
+    save();
+    setFirebaseStatus('sincronización completada en companies/'+companyId);
+    alert('Sincronización completada. Revisa Firestore: companies/'+companyId);
+    render('firebase');
+  }catch(e){
+    setFirebaseStatus('ERROR: '+e.message);
+    alert('No se pudo sincronizar: '+e.message);
+  }
 }
 function downloadFirebaseRules(){ alert('El ZIP incluye reglas actualizadas. Importante: publica firestore.rules antes de sincronizar datos reales.'); }
 function exportAccountingPackage(){
-  const pack={version:'0.8.4',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
-  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.4.json`; a.click();
+  const pack={version:'0.8.5',company:db.company,period:db.activePeriod,accounts:db.accounts,entries:db.entries,trialBalance:trialBalanceRows?.()||[],incidents:db.incidents,audit:db.audit,exportedAt:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`nexus_accounting_package_${db.activePeriod||'period'}_v0.8.5.json`; a.click();
 }
 
 const renderV07 = render;
