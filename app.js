@@ -993,3 +993,265 @@ render = function(page){
 
 const loginV08 = login;
 login = function(){ migrateV08(); document.getElementById('loginView').classList.add('hidden'); document.getElementById('appView').classList.remove('hidden'); renderNav(); render('dashboard'); };
+
+// ===== v0.9 · Empresa Operativa + Apertura Contable Real =====
+(function(){
+  if(!navItems.some(n=>n[0]==='opening')){
+    const idx = navItems.findIndex(n=>n[0]==='settings');
+    navItems.splice(idx>=0?idx:navItems.length,0,['opening','Apertura Contable']);
+  }
+})();
+
+function ensureOperationalChart(){
+  db.accounts ||= [];
+  const add = acc => { if(!db.accounts.some(a=>String(a.code)===String(acc.code))) db.accounts.push(acc); };
+  [
+    {code:'1000',name:'Activos',type:'asset',parent:null,nature:'debit',posting:false},
+    {code:'1100',name:'Caja',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'1200',name:'Banco',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'1300',name:'Cuentas por Cobrar',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'1400',name:'Inventario',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'1500',name:'Equipos',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'1600',name:'Herramientas',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'1700',name:'Vehículos',type:'asset',parent:'1000',nature:'debit',posting:true},
+    {code:'2000',name:'Pasivos',type:'liability',parent:null,nature:'credit',posting:false},
+    {code:'2100',name:'Cuentas por Pagar',type:'liability',parent:'2000',nature:'credit',posting:true},
+    {code:'2200',name:'Préstamos por Pagar',type:'liability',parent:'2000',nature:'credit',posting:true},
+    {code:'2250',name:'Tarjetas de Crédito',type:'liability',parent:'2000',nature:'credit',posting:true},
+    {code:'2300',name:'IVU por Pagar',type:'liability',parent:'2000',nature:'credit',posting:true},
+    {code:'3000',name:'Capital',type:'equity',parent:null,nature:'credit',posting:false},
+    {code:'3100',name:'Capital Aportado',type:'equity',parent:'3000',nature:'credit',posting:true},
+    {code:'3200',name:'Utilidades Retenidas',type:'equity',parent:'3000',nature:'credit',posting:true},
+    {code:'4000',name:'Ingresos',type:'income',parent:null,nature:'credit',posting:false},
+    {code:'4100',name:'Ingresos por Servicios',type:'income',parent:'4000',nature:'credit',posting:true},
+    {code:'4200',name:'Ingresos por Instalaciones',type:'income',parent:'4000',nature:'credit',posting:true},
+    {code:'4300',name:'Intereses Bancarios',type:'income',parent:'4000',nature:'credit',posting:true},
+    {code:'5000',name:'Gastos',type:'expense',parent:null,nature:'debit',posting:false},
+    {code:'5100',name:'Materiales',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5200',name:'Combustible',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5300',name:'Renta',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5400',name:'Publicidad',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5500',name:'Cargos Bancarios',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5600',name:'Mantenimiento de Vehículos',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5700',name:'Servicios Profesionales',type:'expense',parent:'5000',nature:'debit',posting:true},
+    {code:'5800',name:'Teléfono e Internet',type:'expense',parent:'5000',nature:'debit',posting:true}
+  ].forEach(add);
+  db.accounts.sort((a,b)=>String(a.code).localeCompare(String(b.code)));
+}
+
+function operationalHealth(){
+  companyDefaults(); ensureOperationalChart();
+  const hasOpening = (db.entries||[]).some(e=>e.reference==='OPENING-BALANCE');
+  const rows = [
+    ['Empresa', !!(db.company.tradeName && db.company.legalName)],
+    ['Configuración fiscal', !!(db.company.accountingMethod && typeof db.company.ivu==='number')],
+    ['Banco principal', (db.bankAccounts||[]).length>0 && !!db.company.mainBankId],
+    ['Catálogo de cuentas', (db.accounts||[]).filter(a=>a.parent).length>=10],
+    ['Período inicial', (db.periods||[]).length>0 && !!db.activePeriod],
+    ['Saldos iniciales', !!db.openingBalances && Object.values(db.openingBalances).some(v=>Number(v||0)!==0)],
+    ['Asiento de apertura', hasOpening],
+    ['Libro Diario', (db.entries||[]).length>0],
+    ['Libro Mayor', (db.accounts||[]).some(a=>a.parent && Math.abs(balanceByAccount(a.code))>0)]
+  ];
+  const pct = Math.round(rows.filter(r=>r[1]).length / rows.length * 100);
+  return {rows,pct,ready:pct===100};
+}
+
+function opening(){
+  companyDefaults(); ensureOperationalChart();
+  const h=operationalHealth();
+  const c=db.company;
+  return `<div class="grid two">
+    <div class="card hero-card">
+      <div class="section-title"><h3>Empresa Operativa</h3><span class="badge ${h.ready?'green':'amber'}">${h.pct}%</span></div>
+      <p class="muted">Este flujo crea la empresa, carga catálogo de servicios, configura banco, abre período y genera el asiento de apertura.</p>
+      <div class="progress"><span style="width:${h.pct}%"></span></div>
+      <div class="step-list" style="margin-top:14px">${h.rows.map(([name,ok])=>`<div class="step-item"><strong>${name}</strong>${ok?'<span class="badge green">OK</span>':'<span class="badge amber">Pendiente</span>'}</div>`).join('')}</div>
+      <div class="actions wrap"><button onclick="createOperationalCompanyFlow()">Crear / Actualizar Empresa Operativa</button><button class="ghost" onclick="syncCompanyToFirestore()">Sincronizar a Firebase</button><button class="ghost" onclick="render('journal')">Ver Libro Diario</button><button class="ghost" onclick="render('ledger')">Ver Libro Mayor</button></div>
+    </div>
+    <div class="card">
+      <h3>Resumen Contable Inicial</h3>
+      <table class="table"><tr><td>Empresa</td><td>${escapeAttr(c.tradeName||c.name)}</td></tr><tr><td>Año fiscal</td><td>${c.fiscalYear}</td></tr><tr><td>Método</td><td>${c.accountingMethod}</td></tr><tr><td>IVU</td><td>${c.ivu}%</td></tr><tr><td>Período activo</td><td>${db.activePeriod||'-'}</td></tr><tr><td>Estado</td><td><span class="badge ${h.ready?'green':'amber'}">${h.ready?'Lista para operar':'Configuración'}</span></td></tr></table>
+      <hr><h3>Impacto</h3><p>El asiento de apertura alimenta automáticamente Libro Diario, Libro Mayor y Balance General inicial.</p>
+    </div>
+  </div>
+  <div class="card config-section">
+    <div class="section-title"><h3>Datos de Apertura</h3><button onclick="createOperationalCompanyFlow()">Guardar y Generar Apertura</button></div>
+    <div class="form-grid">
+      <label>Nombre comercial<input id="opTradeName" value="${escapeAttr(c.tradeName||'')}"></label>
+      <label>Razón social<input id="opLegalName" value="${escapeAttr(c.legalName||'')}"></label>
+      <label>EIN<input id="opEin" value="${escapeAttr(c.ein||'')}"></label>
+      <label>Registro Comerciante<input id="opMerchant" value="${escapeAttr(c.merchantRegistry||'')}"></label>
+      <label>Teléfono<input id="opPhone" value="${escapeAttr(c.phone||'')}"></label>
+      <label>Email<input id="opEmail" value="${escapeAttr(c.email||'')}"></label>
+      <label>Dirección<input id="opAddress" value="${escapeAttr(c.address1||'')}"></label>
+      <label>Año fiscal<input id="opFiscalYear" type="number" value="${Number(c.fiscalYear||new Date().getFullYear())}"></label>
+      <label>Método contable<select id="opMethod"><option ${c.accountingMethod==='Accrual'?'selected':''}>Accrual</option><option ${c.accountingMethod==='Efectivo'?'selected':''}>Efectivo</option></select></label>
+      <label>IVU %<input id="opIvu" type="number" step="0.01" value="${Number(c.ivu||11.5)}"></label>
+      <label>Banco principal<input id="opBankName" value="${escapeAttr((db.bankAccounts||[])[0]?.name||'Banco Popular')}"></label>
+      <label>Tipo de cuenta<select id="opBankType"><option>Checking</option><option>Ahorro</option><option>Procesador</option><option>Tarjeta</option></select></label>
+    </div>
+    <h3>Saldos Iniciales</h3>
+    <div class="form-grid">
+      <label>Caja<input id="opCash" type="number" step="0.01" value="${Number(db.openingBalances?.cash||0)}"></label>
+      <label>Banco<input id="opBank" type="number" step="0.01" value="${Number(db.openingBalances?.bank||0)}"></label>
+      <label>Cuentas por cobrar<input id="opAr" type="number" step="0.01" value="${Number(db.openingBalances?.ar||0)}"></label>
+      <label>Inventario<input id="opInventory" type="number" step="0.01" value="${Number(db.openingBalances?.inventory||0)}"></label>
+      <label>Equipos<input id="opEquipment" type="number" step="0.01" value="${Number(db.openingBalances?.equipment||0)}"></label>
+      <label>Herramientas<input id="opTools" type="number" step="0.01" value="${Number(db.openingBalances?.tools||0)}"></label>
+      <label>Vehículos<input id="opVehicles" type="number" step="0.01" value="${Number(db.openingBalances?.vehicles||0)}"></label>
+      <label>Cuentas por pagar<input id="opAp" type="number" step="0.01" value="${Number(db.openingBalances?.ap||0)}"></label>
+      <label>Préstamos<input id="opLoans" type="number" step="0.01" value="${Number(db.openingBalances?.loans||0)}"></label>
+      <label>Tarjetas<input id="opCards" type="number" step="0.01" value="${Number(db.openingBalances?.cards||0)}"></label>
+      <label>Capital aportado<input id="opCapital" type="number" step="0.01" value="${Number(db.openingBalances?.capital||0)}"></label>
+      <label>Utilidades retenidas<input id="opRetained" type="number" step="0.01" value="${Number(db.openingBalances?.retained||0)}"></label>
+    </div>
+    <div class="actions wrap"><button onclick="createOperationalCompanyFlow()">Crear Empresa + Asiento Apertura</button><button class="ghost" onclick="autoBalanceOpening()">Cuadrar con Capital</button></div>
+  </div>
+  <div class="grid two"><div class="card"><h3>Último Asiento de Apertura</h3>${entriesTable((db.entries||[]).filter(e=>e.reference==='OPENING-BALANCE').slice(-1),true)}</div><div class="card"><h3>Balance General Inicial</h3>${initialBalanceTable()}</div></div>`;
+}
+
+function autoBalanceOpening(){
+  const assets = ['opCash','opBank','opAr','opInventory','opEquipment','opTools','opVehicles'].reduce((s,id)=>s+Number(document.getElementById(id)?.value||0),0);
+  const liabilities = ['opAp','opLoans','opCards'].reduce((s,id)=>s+Number(document.getElementById(id)?.value||0),0);
+  const retained = Number(document.getElementById('opRetained')?.value||0);
+  const capital = assets - liabilities - retained;
+  const el=document.getElementById('opCapital'); if(el) el.value = capital.toFixed(2);
+}
+
+function createOperationalCompanyFlow(){
+  try{
+    companyDefaults(); ensureOperationalChart();
+    const c=db.company;
+    c.id = c.id || ('company-'+crypto.randomUUID().slice(0,8));
+    c.tradeName = opTradeName.value.trim() || 'Empresa sin nombre';
+    c.name = c.tradeName;
+    c.legalName = opLegalName.value.trim() || c.tradeName;
+    c.ein = opEin.value.trim(); c.merchantRegistry = opMerchant.value.trim();
+    c.phone = opPhone.value.trim(); c.email = opEmail.value.trim(); c.address1 = opAddress.value.trim();
+    c.industry = 'Servicios profesionales y técnicos'; c.entityType = c.entityType || 'LLC';
+    c.fiscalYear = Number(opFiscalYear.value||new Date().getFullYear());
+    c.fiscalStart = `${c.fiscalYear}-01-01`; c.fiscalEnd = `${c.fiscalYear}-12-31`;
+    c.accountingMethod = opMethod.value; c.ivu = Number(opIvu.value||0); c.ivuEnabled = c.ivu > 0;
+    c.operatingStatus = 'Configuración';
+
+    const bankName = opBankName.value.trim() || 'Banco Principal';
+    if(!(db.bankAccounts||[]).length){ db.bankAccounts=[]; }
+    let mainBank = db.bankAccounts.find(b=>b.id===c.mainBankId) || db.bankAccounts[0];
+    if(!mainBank){ mainBank={id:'bank-main',account:'1200'}; db.bankAccounts.push(mainBank); }
+    mainBank.name=bankName; mainBank.type=opBankType.value; mainBank.account='1200'; mainBank.currency='USD'; mainBank.status='Activo'; mainBank.openingDate=c.fiscalStart;
+    c.mainBankId=mainBank.id;
+
+    const y=c.fiscalYear; const periodId=`${y}-01`;
+    db.periods ||= [];
+    const existingPeriod = db.periods.find(p=>p.id===periodId);
+    if(existingPeriod){ existingPeriod.status='Abierto'; existingPeriod.year=y; existingPeriod.month=1; existingPeriod.label=`Enero ${y}`; }
+    else db.periods.unshift({id:periodId,year:y,month:1,label:`Enero ${y}`,status:'Abierto',closedAt:null,closedBy:null});
+    db.activePeriod=periodId;
+
+    db.openingBalances={
+      cash:Number(opCash.value||0), bank:Number(opBank.value||0), ar:Number(opAr.value||0), inventory:Number(opInventory.value||0),
+      equipment:Number(opEquipment.value||0), tools:Number(opTools.value||0), vehicles:Number(opVehicles.value||0),
+      ap:Number(opAp.value||0), loans:Number(opLoans.value||0), cards:Number(opCards.value||0), capital:Number(opCapital.value||0), retained:Number(opRetained.value||0)
+    };
+    const o=db.openingBalances;
+    const assets=o.cash+o.bank+o.ar+o.inventory+o.equipment+o.tools+o.vehicles;
+    const liabilities=o.ap+o.loans+o.cards;
+    const equity=o.capital+o.retained;
+    const diff=assets-liabilities-equity;
+    if(Math.abs(diff)>.01) throw new Error(`La apertura no cuadra. Activos deben ser igual a Pasivos + Capital. Diferencia: ${money(diff)}`);
+
+    db.entries = (db.entries||[]).filter(e=>e.reference!=='OPENING-BALANCE');
+    const lines=[];
+    if(o.cash) lines.push(line('1100',o.cash,0));
+    if(o.bank) lines.push(line('1200',o.bank,0));
+    if(o.ar) lines.push(line('1300',o.ar,0));
+    if(o.inventory) lines.push(line('1400',o.inventory,0));
+    if(o.equipment) lines.push(line('1500',o.equipment,0));
+    if(o.tools) lines.push(line('1600',o.tools,0));
+    if(o.vehicles) lines.push(line('1700',o.vehicles,0));
+    if(o.ap) lines.push(line('2100',0,o.ap));
+    if(o.loans) lines.push(line('2200',0,o.loans));
+    if(o.cards) lines.push(line('2250',0,o.cards));
+    if(o.capital) lines.push(line('3100',0,o.capital));
+    if(o.retained) lines.push(line('3200',0,o.retained));
+    if(lines.length){
+      const e = entry(c.fiscalStart,'Asiento de apertura de empresa','OPENING-BALANCE',lines);
+      e.periodId=periodId; e.source='opening'; e.locked=true;
+      postEntry(e);
+    }
+    c.operatingStatus = operationalHealth().ready ? 'Operativo' : 'Configuración';
+    c.setupCompleted = c.operatingStatus==='Operativo';
+    audit('Empresa operativa creada/actualizada',c.tradeName,{periodId,assets,liabilities,equity});
+    save();
+    document.getElementById('companyLabel').textContent=`${c.tradeName} · Año Fiscal ${c.fiscalYear}`;
+    alert('Empresa operativa creada. Asiento de apertura registrado y Libro Mayor actualizado.');
+    render('opening');
+  }catch(e){ alert(e.message); }
+}
+
+function initialBalanceTable(){
+  const t=totals();
+  return `<table class="table"><tr><td>Activos</td><td>${money(t.assets)}</td></tr><tr><td>Pasivos</td><td>${money(t.liabilities)}</td></tr><tr><td>Capital</td><td>${money(t.equity)}</td></tr><tr><th>Diferencia</th><th class="${Math.abs(t.assets-t.liabilities-t.equity)<.01?'positive':'warning'}">${money(t.assets-t.liabilities-t.equity)}</th></tr></table>`;
+}
+
+const settingsV09Base = settings;
+settings = function(){
+  const h=operationalHealth();
+  return `<div class="card hero-card"><div class="section-title"><h3>Centro de Configuración Contable</h3><span class="badge ${h.ready?'green':'amber'}">Empresa ${h.ready?'Operativa':'en configuración'}</span></div><p class="muted">La configuración gobierna facturación, bancos, reconciliaciones, estados financieros y cierre mensual.</p><div class="progress"><span style="width:${h.pct}%"></span></div><div class="actions wrap"><button onclick="render('opening')">Abrir Empresa Operativa</button><button class="ghost" onclick="syncCompanyToFirestore()">Sincronizar Firebase</button></div></div>` + settingsV09Base();
+};
+
+const dashboardV09Base = dashboard;
+dashboard = function(){
+  const h=operationalHealth();
+  return `<div class="card hero-card"><div class="section-title"><h3>Estado de Implementación</h3><span class="badge ${h.ready?'green':'amber'}">${h.pct}%</span></div><div class="progress"><span style="width:${h.pct}%"></span></div><div class="actions wrap"><button onclick="render('opening')">Continuar apertura contable</button><button class="ghost" onclick="render('settings')">Configuración</button></div></div>` + dashboardV09Base();
+};
+
+const syncCompanyToFirestoreV085 = syncCompanyToFirestore;
+syncCompanyToFirestore = async function(){
+  setFirebaseStatus?.('preparando empresa operativa...');
+  try{
+    companyDefaults(); ensureOperationalChart();
+    const s=await withTimeout(getFirebaseServices(),15000,'Conexión Firebase');
+    const uid=s.auth.currentUser.uid;
+    const companyId=(db.firebase?.devCompanyId)||`${(db.company.id||'company').replace(/[^a-zA-Z0-9_-]/g,'')}-${uid.slice(0,8)}`;
+    db.firebase.devCompanyId=companyId;
+    const now=new Date().toISOString();
+    const h=operationalHealth();
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId),sanitizeFirestoreDeep({...firestoreSafeCompanyDoc(db.company),ownerUid:uid,operationalHealth:h,updatedAt:now,source:'Nexus Accounting PR v0.9'}),{merge:true}),15000,'Guardar empresa');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'settings','main'),sanitizeFirestoreDeep({companyId,activePeriod:db.activePeriod,sequences:db.sequences,openingBalances:db.openingBalances,health:h,updatedAt:now}),{merge:true}),15000,'Guardar settings');
+    await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'users',uid),sanitizeFirestoreDeep({uid,email:s.auth.currentUser.email||'anonymous-dev',role:'Administrador',status:'Activo',updatedAt:now}),{merge:true}),15000,'Guardar admin');
+    for(const a of db.accounts||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'chart_accounts',String(a.code)),sanitizeFirestoreDeep(a),{merge:true}),15000,'Guardar cuenta '+a.code);
+    for(const b of db.bankAccounts||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'bank_accounts',String(b.id)),sanitizeFirestoreDeep(b),{merge:true}),15000,'Guardar banco '+b.id);
+    for(const p of db.periods||[]) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'periods',String(p.id)),sanitizeFirestoreDeep(p),{merge:true}),15000,'Guardar período '+p.id);
+    for(const e of db.entries||[]){
+      await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'journal_entries',String(e.id)),sanitizeFirestoreDeep(e),{merge:true}),15000,'Guardar asiento '+e.reference);
+      for(let i=0;i<(e.lines||[]).length;i++) await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'journal_entries',String(e.id),'journal_lines',String(i+1)),sanitizeFirestoreDeep({...e.lines[i],lineNo:i+1,entryId:e.id,periodId:e.periodId||db.activePeriod}),{merge:true}),15000,'Guardar línea '+(i+1));
+    }
+    for(const log of (db.audit||[]).slice(-100)){
+      const id=log.id || crypto.randomUUID(); log.id=id;
+      await withTimeout(s.setDoc(s.doc(s.firestore,'companies',companyId,'audit_logs',String(id)),sanitizeFirestoreDeep(log),{merge:true}),15000,'Guardar auditoría');
+    }
+    db.firebase.lastSync=now; db.firebase.lastCompanyPath='companies/'+companyId;
+    audit('Firebase sync v0.9 completado',companyId,{uid,health:h.pct});
+    save();
+    setFirebaseStatus?.('sincronización completada en companies/'+companyId);
+    alert('Sincronización completada: companies/'+companyId);
+    render(active==='firebase'?'firebase':'opening');
+  }catch(e){
+    setFirebaseStatus?.('ERROR: '+e.message);
+    alert('No se pudo sincronizar: '+e.message);
+  }
+};
+
+const renderV09Previous = render;
+render = function(page){
+  migrateV08(); companyDefaults(); ensureOperationalChart(); active=page; periodState?.();
+  document.getElementById('pageTitle').textContent=navItems.find(n=>n[0]===page)?.[1]||'Dashboard';
+  renderNav();
+  const map={dashboard,chart,engine,journal,ledger,invoices,ar,ap,banks,importTray,reconciliation,taxes,validation,financials,closing,opening,settings,firebase};
+  document.getElementById('content').innerHTML = (map[page]||dashboard)();
+  if(page==='reconciliation') setTimeout(updateRecSummary,0);
+};
+
+migrateV08(); companyDefaults(); ensureOperationalChart(); save();
