@@ -1272,3 +1272,225 @@ render = function(page){
 };
 
 migrateV08(); companyDefaults(); ensureOperationalChart(); save();
+
+
+// ===== v1.0 · Modo Producción Contable: Empresa activa, períodos, secuencias y Health Check =====
+(function bootV10(){
+  db.meta ||= {};
+  db.meta.version = '1.0.0-accounting-engine';
+  migrateToProductionMode();
+  save();
+})();
+
+function migrateToProductionMode(){
+  companyDefaults();
+  ensureOperationalChart();
+  // Retira el módulo técnico del menú principal. La configuración queda guardada internamente.
+  for(let i=navItems.length-1;i>=0;i--){ if(navItems[i][0]==='firebase') navItems.splice(i,1); }
+  if(!navItems.some(n=>n[0]==='system')){
+    const idx=navItems.findIndex(n=>n[0]==='settings');
+    navItems.splice(idx>=0?idx:navItems.length,0,['system','Estado del Sistema']);
+  }
+  if(!navItems.some(n=>n[0]==='periods')){
+    const idx=navItems.findIndex(n=>n[0]==='financials');
+    navItems.splice(idx>=0?idx:navItems.length,0,['periods','Períodos']);
+  }
+
+  // Limpieza conservadora: solo elimina datos demo si el usuario no ha configurado una empresa real.
+  const demoNames=['Nexus Demo LLC','Cliente Demo','Suplidor Demo'];
+  if(demoNames.includes(db.company?.name) || demoNames.includes(db.company?.tradeName)){
+    db.company.name='Empresa sin configurar';
+    db.company.tradeName='Empresa sin configurar';
+    db.company.legalName='Empresa sin configurar';
+    db.company.operatingStatus='Configuración';
+  }
+  db.customers=(db.customers||[]).filter(c=>!demoNames.includes(c.name));
+  db.vendors=(db.vendors||[]).filter(v=>!demoNames.includes(v.name));
+  // Remueve el asiento semilla CAP-001 únicamente si no hay apertura real.
+  const hasOpening=(db.entries||[]).some(e=>e.reference==='OPENING-BALANCE');
+  if(!hasOpening){
+    db.entries=(db.entries||[]).filter(e=>!(e.reference==='CAP-001' && /Aporte inicial/i.test(e.concept||'')));
+  }
+  db.sequences ||= {invoice:1,payment:1,journal:1,reconciliation:1};
+  db.sequences.journal = Math.max(Number(db.sequences.journal||1), inferNextSeq('JE'));
+  db.sequences.invoice = Math.max(Number(db.sequences.invoice||1), inferNextSeq('INV'));
+  db.sequences.payment = Math.max(Number(db.sequences.payment||1), inferNextSeq('PAY'));
+  db.sequences.reconciliation = Math.max(Number(db.sequences.reconciliation||1), inferNextSeq('REC'));
+  ensureActivePeriod();
+}
+
+function inferNextSeq(prefix){
+  const year=String(db.company?.fiscalYear||new Date().getFullYear());
+  const refs=[...(db.entries||[]).map(e=>e.reference),...(db.invoices||[]).map(i=>i.number),...(db.reconciliations||[]).map(r=>r.number||r.reference)].filter(Boolean);
+  let max=0;
+  refs.forEach(r=>{ const m=String(r).match(new RegExp('^'+prefix+'-'+year+'-(\\d+)$')); if(m) max=Math.max(max,Number(m[1])); });
+  return max+1;
+}
+
+function ensureActivePeriod(){
+  db.periods ||= [];
+  const y=Number(db.company?.fiscalYear||new Date().getFullYear());
+  if(!db.activePeriod){
+    const now=new Date();
+    const month=(now.getFullYear()===y? now.getMonth()+1 : 1);
+    db.activePeriod=`${y}-${String(month).padStart(2,'0')}`;
+  }
+  if(!db.periods.some(p=>p.id===db.activePeriod)){
+    const [year,mm]=String(db.activePeriod).split('-');
+    db.periods.push({id:db.activePeriod,year:Number(year||y),month:Number(mm||1),label:periodLabel(db.activePeriod),status:'Abierto',createdAt:new Date().toISOString(),closedAt:null,blockedAt:null});
+  }
+}
+function periodLabel(id){
+  const names=['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const [y,m]=String(id||'').split('-');
+  return `${names[Number(m)]||'Período'} ${y||''}`.trim();
+}
+function activePeriodDoc(){ ensureActivePeriod(); return (db.periods||[]).find(p=>p.id===db.activePeriod); }
+function assertActivePeriodOpen(){
+  const p=activePeriodDoc();
+  if(!p) throw new Error('No existe período activo. Crea un período antes de registrar operaciones.');
+  if(['Cerrado','Bloqueado'].includes(p.status)) throw new Error(`El período ${p.id} está ${p.status}. No se permiten nuevos asientos.`);
+  return p;
+}
+function refreshTopbar(){
+  const el=document.getElementById('companyLabel');
+  if(!el) return;
+  const c=db.company||{}; const p=activePeriodDoc();
+  el.textContent=`${c.tradeName||c.name||'Empresa activa'} · ${p?.label||('Año Fiscal '+(c.fiscalYear||''))} · ${c.operatingStatus||'Configuración'}`;
+}
+
+// Refuerza postEntry: cada asiento queda amarrado al período activo y no entra si está cerrado.
+const postEntryV10Base = postEntry;
+postEntry = function(e){
+  const p=assertActivePeriodOpen();
+  e.periodId ||= p.id;
+  e.status ||= 'Registrado';
+  e.createdBy ||= 'local-user';
+  e.createdAt ||= new Date().toISOString();
+  if(!e.reference || /^JE-\d{6}$/.test(String(e.reference))) e.reference=nextSequence('journal');
+  return postEntryV10Base(e);
+};
+
+journalForm = function(){
+  const nextRefPreview=`${db.company.journalPrefix||'JE'}-${db.company.fiscalYear||new Date().getFullYear()}-${String(db.sequences?.journal||1).padStart(6,'0')}`;
+  return `<div class="notice">Período activo: <strong>${activePeriodDoc()?.id}</strong> · Referencia sugerida: <strong>${nextRefPreview}</strong></div>
+  <div class="form-grid"><label>Fecha<input id="jDate" type="date" value="${today()}"></label><label>Referencia<input id="jRef" placeholder="Automática si se deja en blanco"></label><label class="full">Concepto<input id="jConcept" placeholder="Descripción del asiento"></label><label>Cuenta débito<select id="jDebitAcc">${accountOptions()}</select></label><label>Monto débito<input id="jDebit" type="number" step="0.01"></label><label>Cuenta crédito<select id="jCreditAcc">${accountOptions()}</select></label><label>Monto crédito<input id="jCredit" type="number" step="0.01"></label></div><div class="actions"><button onclick="saveJournal()">Guardar asiento</button></div>`;
+};
+
+saveJournal = function(){
+  try{
+    const ref=(jRef.value||'').trim() || nextSequence('journal');
+    const e=entry(jDate.value,jConcept.value||'Asiento manual',ref,[line(jDebitAcc.value,jDebit.value,0),line(jCreditAcc.value,0,jCredit.value)]);
+    e.source='manual'; e.transactionType='manual';
+    postEntry(e); closeModal(); render(active);
+  }catch(e){ alert(e.message); }
+};
+
+saveInvoice = function(){
+  try{
+    assertActivePeriodOpen();
+    const c=db.customers.find(x=>x.id===iCustomer.value) || {id:'walk-in',name:'Cliente'};
+    const subtotal=Number(iSubtotal.value||0); const tax=iTax.value==='yes'?subtotal*(db.company.ivu/100):0; const total=subtotal+tax;
+    const number=nextSequence('invoice');
+    const inv={id:crypto.randomUUID(),number,customerId:c.id,customerName:c.name,date:iDate.value,desc:iDesc.value,subtotal,tax,total,balance:total,status:'Pendiente',periodId:db.activePeriod,createdAt:new Date().toISOString()};
+    db.invoices.push(inv);
+    const e=entry(iDate.value,`Factura ${number} - ${c.name}`,number,[line('1300',total,0),line('4100',0,subtotal),line('2300',0,tax)]);
+    e.source='invoice'; e.transactionType='invoice';
+    postEntry(e); save(); closeModal(); render('invoices');
+  }catch(e){ alert(e.message); }
+};
+
+payInvoice = function(id){
+  try{
+    assertActivePeriodOpen();
+    const inv=db.invoices.find(i=>i.id===id); if(!inv) return alert('Factura no encontrada.');
+    const amount=Number(inv.balance||0); if(amount<=0) return alert('La factura no tiene balance pendiente.');
+    inv.balance=0; inv.status='Pagada';
+    const ref=nextSequence('payment');
+    const e=entry(today(),`Cobro factura ${inv.number}`,ref,[line('1200',amount,0),line('1300',0,amount)]);
+    e.source='payment'; e.transactionType='receipt'; e.invoiceId=id;
+    postEntry(e); save(); render(active);
+  }catch(e){ alert(e.message); }
+};
+
+saveExpense = function(){
+  try{
+    assertActivePeriodOpen();
+    const amt=Number(eAmount.value||0); if(amt<=0) return alert('El monto debe ser mayor de cero.');
+    const ref=nextSequence('journal');
+    const e=entry(eDate.value,eDesc.value||'Gasto operacional',ref,[line(eAcc.value,amt,0),line(eBank.value,0,amt)]);
+    e.source='expense'; e.transactionType='expense';
+    postEntry(e); closeModal(); render('dashboard');
+  }catch(e){ alert(e.message); }
+};
+
+function system(){
+  migrateToProductionMode();
+  const h=operationalHealth(); const p=activePeriodDoc(); const trial=trialBalanceRows?.()||[];
+  const deb=trial.reduce((s,r)=>s+Number(r.debit||0),0), cre=trial.reduce((s,r)=>s+Number(r.credit||0),0);
+  const fb=db.firebase||{};
+  const tech=[
+    ['Firebase config', !!(fb.apiKey && fb.projectId && fb.appId)],
+    ['Firestore sync', !!fb.lastSync],
+    ['Ruta empresa', !!fb.lastCompanyPath],
+    ['Storage', !!fb.storageBucket]
+  ];
+  const acct=[
+    ['Empresa activa', !!(db.company?.tradeName && db.company.tradeName!=='Empresa sin configurar')],
+    ['Período abierto', p?.status==='Abierto'],
+    ['Libro Diario', (db.entries||[]).length>0],
+    ['Libro Mayor', (db.accounts||[]).some(a=>a.parent && Math.abs(balanceByAccount(a.code))>0)],
+    ['Balance de comprobación', Math.round(deb*100)===Math.round(cre*100)],
+    ['Health Check', h.ready]
+  ];
+  const row=(r)=>`<div class="step-item"><strong>${r[0]}</strong>${r[1]?'<span class="badge green">OK</span>':'<span class="badge amber">Revisar</span>'}</div>`;
+  return `<div class="grid three">
+    <div class="card kpi"><div class="label">Estado Sistema</div><div class="value ${tech.every(x=>x[1])?'positive':'warning'}">${tech.every(x=>x[1])?'Operativo':'Revisión'}</div><div class="sub">Infraestructura técnica</div></div>
+    <div class="card kpi"><div class="label">Estado Contable</div><div class="value ${acct.every(x=>x[1])?'positive':'warning'}">${acct.every(x=>x[1])?'Operativo':'Pendiente'}</div><div class="sub">Período ${p?.id||'-'}</div></div>
+    <div class="card kpi"><div class="label">Última Sync</div><div class="value">${fb.lastSync?new Date(fb.lastSync).toLocaleDateString():'-'}</div><div class="sub">${fb.lastCompanyPath||'Sin ruta Firestore'}</div></div>
+  </div>
+  <div class="grid two" style="margin-top:16px">
+    <div class="card"><div class="section-title"><h3>Estado Técnico</h3><button class="ghost" onclick="syncCompanyToFirestore()">Sincronizar Firebase</button></div><div class="step-list">${tech.map(row).join('')}</div><hr><small>El panel DEV fue retirado del menú principal. La configuración técnica queda encapsulada.</small></div>
+    <div class="card"><div class="section-title"><h3>Estado Contable</h3><button class="ghost" onclick="render('opening')">Apertura Contable</button></div><div class="step-list">${acct.map(row).join('')}</div></div>
+  </div>`;
+}
+
+function periods(){
+  migrateToProductionMode();
+  const rows=(db.periods||[]).sort((a,b)=>String(b.id).localeCompare(String(a.id)));
+  return `<div class="card"><div class="section-title"><h3>Períodos Contables</h3><button onclick="createNextPeriod()">+ Crear próximo período</button></div><p class="muted">Las operaciones solo pueden registrarse en períodos abiertos.</p><div class="table-wrap"><table class="table"><thead><tr><th>Período</th><th>Etiqueta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td>${p.id}</td><td>${p.label||periodLabel(p.id)}</td><td><span class="badge ${p.status==='Abierto'?'green':p.status==='Cerrado'?'amber':'red'}">${p.status}</span></td><td><button class="ghost" onclick="setActivePeriod('${p.id}')">Activar</button> <button class="ghost" onclick="toggleClosePeriod('${p.id}')">${p.status==='Abierto'?'Cerrar':'Reabrir'}</button> <button class="ghost" onclick="blockPeriod('${p.id}')">Bloquear</button></td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function setActivePeriod(id){ db.activePeriod=id; audit('Período activado',id); save(); render('periods'); }
+function toggleClosePeriod(id){ const p=db.periods.find(x=>x.id===id); if(!p) return; if(p.status==='Abierto'){ p.status='Cerrado'; p.closedAt=new Date().toISOString(); } else if(p.status==='Cerrado'){ p.status='Abierto'; p.closedAt=null; } else return alert('Un período bloqueado no se reabre desde esta pantalla.'); audit('Cambio estado período',id,{status:p.status}); save(); render('periods'); }
+function blockPeriod(id){ const p=db.periods.find(x=>x.id===id); if(!p) return; if(!confirm('Bloquear un período evita reabrirlo desde la pantalla normal. ¿Continuar?')) return; p.status='Bloqueado'; p.blockedAt=new Date().toISOString(); audit('Período bloqueado',id); save(); render('periods'); }
+function createNextPeriod(){
+  ensureActivePeriod();
+  const [y,m]=String(db.activePeriod).split('-').map(Number); let ny=y, nm=m+1; if(nm>12){ nm=1; ny++; }
+  const id=`${ny}-${String(nm).padStart(2,'0')}`;
+  if(!db.periods.some(p=>p.id===id)) db.periods.push({id,year:ny,month:nm,label:periodLabel(id),status:'Abierto',createdAt:new Date().toISOString(),closedAt:null});
+  db.activePeriod=id; audit('Período creado',id); save(); render('periods');
+}
+
+const dashboardV10Base = dashboard;
+dashboard = function(){
+  migrateToProductionMode();
+  const h=operationalHealth(); const p=activePeriodDoc();
+  const status = h.ready && p?.status==='Abierto' ? 'OPERATIVO' : 'REVISIÓN';
+  return `<div class="card hero-card"><div class="section-title"><h3>Centro de Control Contable</h3><span class="badge ${status==='OPERATIVO'?'green':'amber'}">${status}</span></div><p class="muted"><strong>${db.company.tradeName||db.company.name}</strong> · Período activo ${p?.id||'-'} · ${p?.status||'-'}</p><div class="progress"><span style="width:${h.pct}%"></span></div><div class="actions wrap"><button onclick="render('system')">Estado del Sistema</button><button class="ghost" onclick="render('periods')">Períodos</button><button class="ghost" onclick="render('financials')">Balance de Comprobación</button></div></div>` + dashboardV10Base();
+};
+
+const renderV10Previous = render;
+render = function(page){
+  migrateToProductionMode(); active=page; refreshTopbar();
+  document.getElementById('pageTitle').textContent=navItems.find(n=>n[0]===page)?.[1]||'Dashboard';
+  renderNav();
+  const map={dashboard,chart,engine,journal,ledger,invoices,ar,ap,banks,importTray,reconciliation,taxes,validation,financials,closing,opening,periods,system,settings,firebase};
+  document.getElementById('content').innerHTML = (map[page]||dashboard)();
+  if(page==='reconciliation') setTimeout(updateRecSummary,0);
+  refreshTopbar();
+};
+
+const loginV10Previous = login;
+login = function(){ migrateToProductionMode(); document.getElementById('loginView').classList.add('hidden'); document.getElementById('appView').classList.remove('hidden'); renderNav(); render('dashboard'); };
+
+window.addEventListener('DOMContentLoaded',()=>{ try{ migrateToProductionMode(); refreshTopbar(); }catch(e){ console.warn(e); } });

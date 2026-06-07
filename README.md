@@ -1,43 +1,29 @@
-# Nexus Accounting PR v0.8.4
+# Nexus Accounting PR v1.0
 
-Corrección de Firebase DEV.
+Portal web de contabilidad profesional enfocado en el ciclo contable.
 
-## Qué corrige
-- Botón Probar conexión Firebase.
-- Autenticación anónima DEV con mensaje claro si no está activa.
-- Crea `ownerUid` en `companies/{companyId}`.
-- Crea primero `companies/{companyId}/users/{uid}` antes de guardar subcolecciones.
-- Reglas Firestore corregidas para owner/admin.
-- Storage bucket actualizado para `firebasestorage.app`.
+## Cambios principales v1.0
 
-## Pasos mínimos en Firebase Console
-1. Authentication → Sign-in method → activar Anonymous para desarrollo.
-2. Firestore Database → crear base de datos.
-3. Rules → pegar el archivo `firestore.rules` incluido.
-4. Storage → crear bucket si vas a subir documentos luego.
-5. Abrir `index.html`, ir a Firebase DEV, guardar config, probar conexión, sincronizar empresa.
+- Se retira **Firebase DEV** del menú principal.
+- Se añade **Estado del Sistema** con estado técnico y contable.
+- Se elimina la dependencia visual de datos demo.
+- Se añade manejo de **períodos contables**: abierto, cerrado y bloqueado.
+- Las operaciones no pueden registrarse en períodos cerrados o bloqueados.
+- Numeración automática reforzada para JE, INV, PAY y REC.
+- Asientos manuales, facturas, cobros y gastos quedan vinculados al período activo.
+- Dashboard actualizado como centro de control contable.
+- Se mantiene la sincronización Firebase ya validada.
 
+## Flujo recomendado
 
-## v0.8.4 hotfix
-- Corrige error Firebase duplicate-app usando app nombrada `nexus-accounting-dev`.
-- Limpia valores pegados con comillas, comas o punto y coma desde Firebase Console.
-- Permite cambiar configuración DEV sin chocar con otra app Firebase cargada en la página.
+1. Abrir **Apertura Contable**.
+2. Crear o actualizar empresa operativa.
+3. Generar asiento de apertura.
+4. Revisar Libro Diario y Libro Mayor.
+5. Revisar **Estados Financieros** / Balance de Comprobación.
+6. Validar en **Estado del Sistema**.
+7. Sincronizar a Firebase.
 
+## Nota técnica
 
-## v0.8.4
-- Corrige error auth/api-key-not-valid limpiando comillas curvas, comas y etiquetas copiadas desde Firebase Console.
-- Valida que API Key empiece con AIza antes de sincronizar.
-- Mantiene app Firebase nombrada para evitar duplicate-app.
-
-
-## Fix v0.8.4
-- Corrige error Firestore: logoData mayor a 1 MiB.
-- El logo ya no se guarda dentro del documento principal de company.
-- Intenta subir el logo a Firebase Storage y guarda la referencia.
-- Si Storage no está listo, sincroniza la empresa y deja el logo como local-only.
-
-
-## v0.9.1
-- Corrige sincronización Firestore: elimina arrays anidados antes de setDoc().
-- Health Check ahora se guarda como lista de objetos seguros.
-- Mantiene líneas del Libro Diario como subcolección journal_lines.
+La configuración Firebase queda encapsulada. Si necesitas cambiar credenciales, la función técnica sigue existiendo en código, pero ya no aparece en el menú principal del usuario.

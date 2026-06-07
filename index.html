@@ -15,7 +15,7 @@
       <input id="loginEmail" type="email" placeholder="Email" value="admin@nexuspr.com" />
       <input id="loginPassword" type="password" placeholder="Contraseña" value="admin123" />
       <button onclick="login()">Iniciar sesión</button>
-      <small>Demo local: admin@nexuspr.com / admin123</small>
+      <small>Acceso local de desarrollo: admin@nexuspr.com / admin123</small>
     </section>
   </div>
 
@@ -35,11 +35,11 @@
       <header class="topbar">
         <div>
           <h2 id="pageTitle">Dashboard</h2>
-          <p id="companyLabel">Nexus Demo LLC · Año Fiscal 2026</p>
+          <p id="companyLabel">Empresa activa · Año Fiscal</p>
         </div>
         <div class="top-actions">
           <button class="ghost" onclick="exportData()">Exportar JSON</button>
-          <button class="ghost" onclick="resetDemo()">Reset demo</button>
+          <button class="ghost" onclick="render('opening')">Administrar Empresa</button>
           <button onclick="openModal('journal')">+ Nuevo asiento</button>
         </div>
       </header>
