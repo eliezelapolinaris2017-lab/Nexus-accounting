@@ -23,7 +23,7 @@ const seed = {
   customers:[{id:crypto.randomUUID(),name:'Cliente Demo',email:'cliente@demo.com',phone:'787-000-0000',balance:0}],
   vendors:[{id:crypto.randomUUID(),name:'Suplidor Demo',email:'suplidor@demo.com',phone:'787-111-1111',balance:0}],
   invoices:[], bills:[], payments:[], bankAccounts:[{id:'bank-main',name:'Banco Principal',account:'1200',balance:0}],
-  reconciliations:[], entries:[], audit:[]
+  reconciliations:[], statementImports:[], entries:[], audit:[]
 };
 
 let db = load();
@@ -39,6 +39,7 @@ function load(){
 }
 function migrate(data){
   data.reconciliations ||= [];
+  data.statementImports ||= [];
   data.bankAccounts ||= [{id:'bank-main',name:'Banco Principal',account:'1200',balance:0}];
   const ensure = acc => { if(!data.accounts.some(a=>a.code===acc.code)) data.accounts.push(acc); };
   ensure({code:'4300',name:'Intereses Bancarios',type:'income',parent:'4000'});
@@ -109,14 +110,69 @@ function unreconciledCount(){ return bankLines('1200').filter(x=>!isCleared(x.ke
 function reconciliationHistory(){ if(!db.reconciliations?.length) return '<div class="empty">No hay reconciliaciones cerradas.</div>'; return `<div class="table-wrap"><table class="table"><thead><tr><th>Fecha estado</th><th>Banco</th><th>Balance estado</th><th>Diferencia</th><th>Estado</th></tr></thead><tbody>${db.reconciliations.slice().reverse().map(r=>`<tr><td>${r.statementDate}</td><td>${r.bankName}</td><td>${money(r.statementBalance)}</td><td>${money(r.difference)}</td><td><span class="badge green">${r.status}</span></td></tr>`).join('')}</tbody></table></div>`; }
 function reconciliation(){
   const b=db.bankAccounts[0]; const rows=bankLines(b.account); const open=rows.filter(r=>!isCleared(r.key));
-  return `<div class="grid two"><div class="card"><div class="section-title"><h3>Reconciliación Bancaria</h3><button onclick="finalizeReconciliation()">Cerrar reconciliación</button></div><div class="form-grid"><label>Banco<input id="recBank" value="${b.name}" disabled></label><label>Fecha del estado<input id="recDate" type="date" value="${today()}"></label><label>Balance según banco<input id="recStatement" type="number" step="0.01" value="${balanceByAccount(b.account).toFixed(2)}" oninput="updateRecSummary()"></label><label>Cuenta contable<input value="${b.account} · ${account(b.account).name}" disabled></label></div><hr><div id="recSummary">${reconciliationSummaryHtml()}</div></div><div class="card"><h3>Movimientos pendientes de reconciliar</h3>${open.length?`<div class="table-wrap"><table class="table"><thead><tr><th></th><th>Fecha</th><th>Ref.</th><th>Concepto</th><th>Entrada</th><th>Salida</th></tr></thead><tbody>${open.map(r=>`<tr><td><input class="rec-check" type="checkbox" value="${r.key}" onchange="updateRecSummary()" checked></td><td>${r.date}</td><td>${r.reference}</td><td>${r.concept}</td><td>${r.amount>0?money(r.amount):'-'}</td><td>${r.amount<0?money(Math.abs(r.amount)):'-'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No hay movimientos pendientes. Banco limpio, como debe ser.</div>'}</div></div>`;
+  const imported=(db.statementImports||[]).filter(x=>x.bankAccountId===b.id && !x.reconciled);
+  return `<div class="grid two">
+    <div class="card">
+      <div class="section-title"><h3>Reconciliación Bancaria</h3><button onclick="finalizeReconciliation()">Cerrar reconciliación</button></div>
+      <div class="form-grid"><label>Banco<input id="recBank" value="${b.name}" disabled></label><label>Fecha del estado<input id="recDate" type="date" value="${today()}"></label><label>Balance según banco<input id="recStatement" type="number" step="0.01" value="${balanceByAccount(b.account).toFixed(2)}" oninput="updateRecSummary()"></label><label>Cuenta contable<input value="${b.account} · ${account(b.account).name}" disabled></label></div>
+      <hr><div id="recSummary">${reconciliationSummaryHtml()}</div>
+    </div>
+    <div class="card">
+      <div class="section-title"><h3>Subir estado de cuenta</h3><button class="ghost" onclick="autoMatchStatement()">Auto reconciliar</button></div>
+      <p class="muted">Carga CSV del banco o entra partidas manuales. Columnas aceptadas: fecha/date, descripción/description, referencia/ref, débito/debit, crédito/credit, monto/amount.</p>
+      <div class="form-grid"><label class="full">Archivo CSV<input id="statementFile" type="file" accept=".csv,text/csv" onchange="importStatementCSV(event)"></label></div>
+      <div class="actions"><button class="ghost" onclick="openModal('statementLine')">+ Partida manual</button><button class="ghost" onclick="clearImportedStatement()">Limpiar importadas</button></div>
+      ${statementImportTable(imported)}
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>Movimientos del libro pendientes</h3>${open.length?`<div class="table-wrap"><table class="table"><thead><tr><th></th><th>Fecha</th><th>Ref.</th><th>Concepto</th><th>Entrada</th><th>Salida</th><th>Match</th></tr></thead><tbody>${open.map(r=>`<tr><td><input class="rec-check" type="checkbox" value="${r.key}" onchange="updateRecSummary()" ${isMatched(r.key)?'checked':''}></td><td>${r.date}</td><td>${r.reference}</td><td>${r.concept}</td><td>${r.amount>0?money(r.amount):'-'}</td><td>${r.amount<0?money(Math.abs(r.amount)):'-'}</td><td>${isMatched(r.key)?'<span class="badge green">Auto</span>':'<span class="badge amber">Manual</span>'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No hay movimientos pendientes. Banco limpio, como debe ser.</div>'}</div>`;
 }
+function statementImportTable(rows){
+  if(!rows.length) return '<div class="empty">No hay partidas importadas del estado de cuenta.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Fecha</th><th>Descripción</th><th>Ref.</th><th>Monto</th><th>Estado</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.description}</td><td>${r.reference||'-'}</td><td>${money(r.amount)}</td><td>${r.bookKey?'<span class="badge green">Conciliada</span>':'<span class="badge amber">Pendiente</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function isMatched(bookKey){ return (db.statementImports||[]).some(x=>x.bookKey===bookKey); }
+function normalizeHeader(h){ return h.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(x=>x.trim()); if(lines.length<2) return [];
+  const split=line=>line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(x=>x.replace(/^"|"$/g,'').trim());
+  const headers=split(lines[0]).map(normalizeHeader);
+  return lines.slice(1).map(line=>{ const cols=split(line); const obj={}; headers.forEach((h,i)=>obj[h]=cols[i]||''); return obj; });
+}
+function num(v){ return Number(String(v||'0').replace(/[$, ]/g,'').replace(/^\((.*)\)$/,'-$1'))||0; }
+function importStatementCSV(ev){
+  const file=ev.target.files?.[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const b=db.bankAccounts[0]; const rows=parseCSV(reader.result);
+    const mapped=rows.map(r=>{
+      const date=r.fecha||r.date||r.postingdate||today();
+      const description=r.descripcion||r.description||r.memo||r.detalle||'Movimiento importado';
+      const reference=r.referencia||r.ref||r.reference||r.numero||'';
+      let amount = r.monto||r.amount ? num(r.monto||r.amount) : (num(r.credito||r.credit||r.deposit||r.entrada)-num(r.debito||r.debit||r.withdrawal||r.salida));
+      return {id:crypto.randomUUID(),bankAccountId:b.id,date,description,reference,amount,reconciled:false,bookKey:null,createdAt:new Date().toISOString()};
+    }).filter(x=>x.amount!==0);
+    db.statementImports.push(...mapped); db.audit.push({date:new Date().toISOString(),action:'Estado bancario importado',reference:`${file.name} · ${mapped.length} partidas`}); save(); render('reconciliation');
+  };
+  reader.readAsText(file);
+}
+function autoMatchStatement(){
+  const b=db.bankAccounts[0]; const open=bankLines(b.account).filter(r=>!isCleared(r.key) && !isMatched(r.key));
+  const imported=(db.statementImports||[]).filter(x=>x.bankAccountId===b.id && !x.bookKey);
+  let matched=0;
+  imported.forEach(st=>{
+    const found=open.find(bl=>!isMatched(bl.key) && Math.abs(bl.amount-st.amount)<.01 && Math.abs(new Date(bl.date)-new Date(st.date)) <= 7*86400000);
+    if(found){ st.bookKey=found.key; st.reconciled=true; matched++; }
+  });
+  db.audit.push({date:new Date().toISOString(),action:'Auto reconciliación ejecutada',reference:`${matched} partidas encontradas`}); save(); render('reconciliation'); alert(`${matched} partidas conciliadas automáticamente.`);
+}
+function clearImportedStatement(){ if(confirm('¿Limpiar partidas importadas no cerradas?')){ db.statementImports=(db.statementImports||[]).filter(x=>x.bookKey && x.reconciled); save(); render('reconciliation'); } }
 function selectedRecRows(){ const keys=[...document.querySelectorAll('.rec-check:checked')].map(x=>x.value); const all=bankLines(db.bankAccounts[0].account); return all.filter(r=>keys.includes(r.key)); }
 function reconciliationSummary(){ const statement=Number(document.getElementById('recStatement')?.value||0); const selected=selectedRecRows(); const cleared=selected.reduce((s,r)=>s+r.amount,0); const difference=statement-cleared; return {statement,cleared,difference,selected}; }
 function reconciliationSummaryHtml(){ return `<div class="grid three"><div class="mini-stat"><span>Balance banco</span><strong id="recStatementView">$0.00</strong></div><div class="mini-stat"><span>Movimientos marcados</span><strong id="recClearedView">$0.00</strong></div><div class="mini-stat"><span>Diferencia</span><strong id="recDiffView">$0.00</strong></div></div><div class="actions"><button class="ghost" onclick="createBankAdjustment()">Crear ajuste por diferencia</button></div>`; }
 function updateRecSummary(){ const r=reconciliationSummary(); document.getElementById('recStatementView').textContent=money(r.statement); document.getElementById('recClearedView').textContent=money(r.cleared); const diff=document.getElementById('recDiffView'); diff.textContent=money(r.difference); diff.className=Math.abs(r.difference)<.01?'positive':'warning'; }
 function createBankAdjustment(){ try{ const r=reconciliationSummary(); if(Math.abs(r.difference)<.01) return alert('No hay diferencia para ajustar.'); const ref=`ADJ-BANK-${Date.now().toString().slice(-6)}`; if(r.difference>0){ postEntry(entry(today(),'Ajuste reconciliación: ingreso bancario no registrado',ref,[line('1200',r.difference,0),line('4300',0,r.difference)])); } else { const amt=Math.abs(r.difference); postEntry(entry(today(),'Ajuste reconciliación: cargo bancario no registrado',ref,[line('5500',amt,0),line('1200',0,amt)])); } render('reconciliation'); }catch(e){ alert(e.message); } }
-function finalizeReconciliation(){ try{ const r=reconciliationSummary(); if(Math.abs(r.difference)>=.01 && !confirm('La reconciliación tiene diferencia. ¿Deseas cerrarla de todos modos?')) return; const b=db.bankAccounts[0]; db.reconciliations.push({id:crypto.randomUUID(),bankAccountId:b.id,bankName:b.name,statementDate:recDate.value,statementBalance:r.statement,clearedBalance:r.cleared,difference:r.difference,clearedKeys:r.selected.map(x=>x.key),status:Math.abs(r.difference)<.01?'Cuadrada':'Cerrada con diferencia',createdAt:new Date().toISOString()}); db.audit.push({date:new Date().toISOString(),action:'Reconciliación bancaria cerrada',reference:b.name}); save(); render('reconciliation'); }catch(e){ alert(e.message); } }
+function finalizeReconciliation(){ try{ const r=reconciliationSummary(); if(Math.abs(r.difference)>=.01 && !confirm('La reconciliación tiene diferencia. ¿Deseas cerrarla de todos modos?')) return; const b=db.bankAccounts[0]; db.reconciliations.push({id:crypto.randomUUID(),bankAccountId:b.id,bankName:b.name,statementDate:recDate.value,statementBalance:r.statement,clearedBalance:r.cleared,difference:r.difference,clearedKeys:r.selected.map(x=>x.key),importedLines:(db.statementImports||[]).filter(x=>x.bankAccountId===b.id && x.bookKey).map(x=>x.id),status:Math.abs(r.difference)<.01?'Cuadrada':'Cerrada con diferencia',createdAt:new Date().toISOString()}); (db.statementImports||[]).forEach(x=>{ if(x.bankAccountId===b.id && x.bookKey) x.closed=true; }); db.audit.push({date:new Date().toISOString(),action:'Reconciliación bancaria cerrada',reference:b.name}); save(); render('reconciliation'); }catch(e){ alert(e.message); } }
 
 function taxes(){ const ivuPayable=balanceByAccount('2300'); return `<div class="grid three"><div class="card kpi"><div class="label">IVU Configurado</div><div class="value">${db.company.ivu}%</div><div class="sub">Puerto Rico</div></div>${kpi('IVU por Pagar',ivuPayable,'Generado por facturas','warning')}<div class="card"><h3>Resumen</h3><p>El IVU se calcula automáticamente desde facturación y se acredita a IVU por Pagar.</p></div></div>`; }
 function financials(){ const t=totals(); return `<div class="grid two"><div class="card"><h3>Estado de Resultados</h3><table class="table"><tr><td>Ingresos</td><td>${money(t.income)}</td></tr><tr><td>Gastos</td><td>${money(t.expense)}</td></tr><tr><th>Utilidad neta</th><th>${money(t.net)}</th></tr></table></div><div class="card"><h3>Balance General</h3><table class="table"><tr><td>Activos</td><td>${money(t.assets)}</td></tr><tr><td>Pasivos</td><td>${money(t.liabilities)}</td></tr><tr><td>Capital</td><td>${money(t.equity)}</td></tr></table></div></div>`; }
@@ -128,6 +184,7 @@ function openModal(type){
   if(type==='journal') modal('Nuevo asiento contable', journalForm());
   if(type==='invoice') modal('Nueva factura', invoiceForm());
   if(type==='expense') modal('Registrar gasto', expenseForm());
+  if(type==='statementLine') modal('Partida manual del estado bancario', statementLineForm());
 }
 function closeModal(){ document.getElementById('modal').classList.add('hidden'); }
 function modal(title,body){ document.getElementById('modalTitle').textContent=title; document.getElementById('modalBody').innerHTML=body; }
@@ -139,6 +196,10 @@ function saveInvoice(){ const c=db.customers.find(x=>x.id===iCustomer.value); co
 function payInvoice(id){ const inv=db.invoices.find(i=>i.id===id); const amount=inv.balance; inv.balance=0; inv.status='Pagada'; postEntry(entry(today(),`Cobro factura ${inv.number}`,`PAY-${inv.number}`,[line('1200',amount,0),line('1300',0,amount)])); save(); render(active); }
 function expenseForm(){ return `<div class="form-grid"><label>Fecha<input id="eDate" type="date" value="${today()}"></label><label>Categoría<select id="eAcc">${accountOptions('expense')}</select></label><label class="full">Descripción<input id="eDesc" value="Gasto operacional"></label><label>Monto<input id="eAmount" type="number" step="0.01" value="50.00"></label><label>Pago desde<select id="eBank"><option value="1200">Banco</option><option value="1100">Caja</option></select></label></div><div class="actions"><button onclick="saveExpense()">Registrar gasto</button></div>`; }
 function saveExpense(){ try{ const amt=Number(eAmount.value||0); postEntry(entry(eDate.value,eDesc.value,`EXP-${Date.now().toString().slice(-6)}`,[line(eAcc.value,amt,0),line(eBank.value,0,amt)])); closeModal(); render('dashboard'); }catch(e){ alert(e.message); } }
+
+function statementLineForm(){ return `<div class="form-grid"><label>Fecha<input id="sDate" type="date" value="${today()}"></label><label>Referencia<input id="sRef" placeholder="Opcional"></label><label class="full">Descripción<input id="sDesc" value="Movimiento bancario manual"></label><label>Monto<input id="sAmount" type="number" step="0.01" placeholder="Depósito positivo / retiro negativo"></label></div><div class="actions"><button onclick="saveStatementLine()">Guardar partida</button></div>`; }
+function saveStatementLine(){ const b=db.bankAccounts[0]; const amt=Number(sAmount.value||0); if(!amt) return alert('El monto no puede ser cero.'); db.statementImports.push({id:crypto.randomUUID(),bankAccountId:b.id,date:sDate.value,description:sDesc.value,reference:sRef.value,amount:amt,reconciled:false,bookKey:null,manual:true,createdAt:new Date().toISOString()}); save(); closeModal(); render('reconciliation'); }
+
 function exportData(){ const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='nexus-accounting-pr-data.json'; a.click(); }
 function resetDemo(){ if(confirm('Esto reinicia la demo local.')){ localStorage.removeItem('nexusAccountingPR'); db=load(); render('dashboard'); } }
 
